@@ -5,3 +5,6 @@ class CategoriesConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.categories"
     verbose_name = "Categories"
+
+    def ready(self):
+        import apps.categories.signals  # noqa: F401
