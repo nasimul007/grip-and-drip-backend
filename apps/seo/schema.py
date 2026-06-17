@@ -137,7 +137,11 @@ def organization_schema(request=None) -> dict:
 
 def _site_url(request) -> str:
     if request:
-        return f"{request.scheme}://{request.get_host()}"
+        try:
+            host = request.get_host()
+        except Exception:
+            host = "localhost:8000"
+        return f"{request.scheme}://{host}"
     return ""
 
 
