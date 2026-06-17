@@ -1,0 +1,182 @@
+from rest_framework import serializers
+from .models import Product, ProductImage, ProductVariant
+
+
+class ProductImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductImage
+        fields = ("id", "image", "alt_text", "is_primary", "sort_order")
+
+
+class ProductVariantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductVariant
+        fields = (
+            "id",
+            "name",
+            "sku",
+            "price_override",
+            "stock",
+            "is_active",
+            "attributes",
+            "sort_order",
+        )
+
+
+class ProductListSerializer(serializers.ModelSerializer):
+    primary_image = serializers.SerializerMethodField()
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    category_slug = serializers.CharField(source="category.slug", read_only=True)
+    effective_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+
+    class Meta:
+        model = Product
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "primary_image",
+            "category_name",
+            "category_slug",
+            "price",
+            "compare_price",
+            "effective_price",
+            "stock",
+            "is_active",
+            "is_featured",
+            "brand",
+            "created_at",
+        )
+
+    def get_primary_image(self, obj):
+        primary = obj.images.filter(is_primary=True).first()
+        if primary:
+            return ProductImageSerializer(primary).data
+        first_img = obj.images.first()
+        if first_img:
+            return ProductImageSerializer(first_img).data
+        return None
+
+
+class ProductDetailSerializer(serializers.ModelSerializer):
+    images = ProductImageSerializer(many=True, read_only=True)
+    variants = ProductVariantSerializer(many=True, read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    category_slug = serializers.CharField(source="category.slug", read_only=True)
+    effective_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+    breadcrumb = serializers.SerializerMethodField()
+    schema_markup = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "description",
+            "category_name",
+            "category_slug",
+            "price",
+            "compare_price",
+            "effective_price",
+            "sku",
+            "stock",
+            "is_active",
+            "is_featured",
+            "brand",
+            "attributes",
+            "meta_title",
+            "meta_description",
+            "og_image",
+            "images",
+            "variants",
+            "breadcrumb",
+            "schema_markup",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_breadcrumb(self, obj):
+        if obj.category:
+            return obj.category.get_breadcrumb()
+        return []
+
+    def get_schema_markup(self, obj):
+        request = self.context.get("request")
+        return generate_product_schema(obj, request)
+
+
+class RelatedProductSerializer(serializers.ModelSerializer):
+    primary_image = serializers.SerializerMethodField()
+    effective_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+
+    class Meta:
+        model = Product
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "primary_image",
+            "price",
+            "compare_price",
+            "effective_price",
+            "stock",
+            "brand",
+        )
+
+    def get_primary_image(self, obj):
+        primary = obj.images.filter(is_primary=True).first()
+        if primary:
+            return ProductImageSerializer(primary).data
+        first_img = obj.images.first()
+        if first_img:
+            return ProductImageSerializer(first_img).data
+        return None
+
+
+def generate_product_schema(product, request=None):
+    site_url = ""
+    if request:
+        site_url = f"{request.scheme}://{request.get_host()}"
+
+    product_url = f"{site_url}/api/products/{product.slug}/" if site_url else ""
+
+    primary_image = product.images.filter(is_primary=True).first()
+    image_url = ""
+    if primary_image and primary_image.image and site_url:
+        image_url = f"{site_url}{primary_image.image.url}"
+
+    schema = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": product.get_meta_title(),
+        "description": product.get_meta_description(),
+        "sku": product.sku,
+        "brand": {
+            "@type": "Brand",
+            "name": product.brand or "Grip & Drip",
+        },
+        "offers": {
+            "@type": "Offer",
+            "url": product_url,
+            "priceCurrency": "BDT",
+            "price": str(product.effective_price),
+            "availability": (
+                "https://schema.org/InStock"
+                if product.in_stock
+                else "https://schema.org/OutOfStock"
+            ),
+            "itemCondition": "https://schema.org/NewCondition",
+        },
+    }
+
+    if image_url:
+        schema["image"] = [image_url]
+
+    return schema
