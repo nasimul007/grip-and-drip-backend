@@ -1,35 +1,40 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from apps.products.models import Product
-from apps.products.serializers import generate_product_schema
+from apps.categories.models import Category
+from .schema import product_schema, category_schema, breadcrumb_list, organization_schema
 
 
 @api_view(["GET"])
-def product_schema(request, slug):
+def product_schema_view(request, slug):
     try:
-        product = Product.objects.get(slug=slug, is_active=True, soft_deleted=False)
+        product = Product.objects.select_related("category").prefetch_related(
+            "images"
+        ).get(slug=slug, is_active=True, soft_deleted=False)
     except Product.DoesNotExist:
         return Response({"error": "Product not found"}, status=404)
-    schema = generate_product_schema(product, request)
-    return Response(schema)
+    return Response(product_schema(product, request))
 
 
 @api_view(["GET"])
-def organization_schema(request):
-    site_url = f"{request.scheme}://{request.get_host()}"
-    schema = {
-        "@context": "https://schema.org",
-        "@type": "Organization",
-        "name": "Grip & Drip",
-        "url": site_url,
-        "description": "Premium mobile covers, wallets, and card holders.",
-        "potentialAction": {
-            "@type": "SearchAction",
-            "target": {
-                "@type": "EntryPoint",
-                "urlTemplate": f"{site_url}/api/search/?q={{search_term_string}}",
-            },
-            "query-input": "required name=search_term_string",
-        },
-    }
-    return Response(schema)
+def category_schema_view(request, slug):
+    try:
+        category = Category.objects.get(slug=slug, is_active=True)
+    except Category.DoesNotExist:
+        return Response({"error": "Category not found"}, status=404)
+    return Response(category_schema(category, request))
+
+
+@api_view(["GET"])
+def breadcrumb_view(request, slug):
+    try:
+        category = Category.objects.get(slug=slug, is_active=True)
+    except Category.DoesNotExist:
+        return Response({"error": "Category not found"}, status=404)
+    crumbs = category.get_breadcrumb()
+    return Response(breadcrumb_list(crumbs, request))
+
+
+@api_view(["GET"])
+def organization_schema_view(request):
+    return Response(organization_schema(request))

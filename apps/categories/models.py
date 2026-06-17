@@ -57,3 +57,11 @@ class Category(MPTTModel):
             {"name": ancestor.name, "slug": ancestor.slug}
             for ancestor in ancestors
         ]
+
+    def get_meta_title(self):
+        return self.meta_title or self.name
+
+    def get_meta_description(self):
+        return self.meta_description or (
+            self.description[:157] + "..." if len(self.description) > 160 else self.description
+        )

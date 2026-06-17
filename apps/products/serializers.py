@@ -140,43 +140,8 @@ class RelatedProductSerializer(serializers.ModelSerializer):
         return None
 
 
+from apps.seo.schema import product_schema as _product_schema
+
+
 def generate_product_schema(product, request=None):
-    site_url = ""
-    if request:
-        site_url = f"{request.scheme}://{request.get_host()}"
-
-    product_url = f"{site_url}/api/products/{product.slug}/" if site_url else ""
-
-    primary_image = product.images.filter(is_primary=True).first()
-    image_url = ""
-    if primary_image and primary_image.image and site_url:
-        image_url = f"{site_url}{primary_image.image.url}"
-
-    schema = {
-        "@context": "https://schema.org",
-        "@type": "Product",
-        "name": product.get_meta_title(),
-        "description": product.get_meta_description(),
-        "sku": product.sku,
-        "brand": {
-            "@type": "Brand",
-            "name": product.brand or "Grip & Drip",
-        },
-        "offers": {
-            "@type": "Offer",
-            "url": product_url,
-            "priceCurrency": "BDT",
-            "price": str(product.effective_price),
-            "availability": (
-                "https://schema.org/InStock"
-                if product.in_stock
-                else "https://schema.org/OutOfStock"
-            ),
-            "itemCondition": "https://schema.org/NewCondition",
-        },
-    }
-
-    if image_url:
-        schema["image"] = [image_url]
-
-    return schema
+    return _product_schema(product, request)

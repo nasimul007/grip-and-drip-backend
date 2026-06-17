@@ -86,7 +86,11 @@ class Product(models.Model):
 
     @property
     def effective_price(self):
-        return self.compare_price or self.price
+        return self.price
+
+    @property
+    def has_discount(self):
+        return self.compare_price is not None and self.compare_price > self.price
 
     @property
     def in_stock(self):
