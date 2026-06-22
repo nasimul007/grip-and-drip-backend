@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "apps.categories",
     "apps.products",
     "apps.orders",
+    "apps.contact",
     "apps.seo",
 ]
 

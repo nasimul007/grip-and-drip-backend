@@ -10,6 +10,7 @@ urlpatterns = [
     # API
     path("api/auth/", include("apps.accounts.urls")),
     path("api/", include("apps.orders.urls")),
+    path("api/", include("apps.contact.urls")),
     path("api/categories/", include("apps.categories.urls")),
     path("api/products/", include("apps.products.urls")),
     path("api/search/", include("apps.products.search_urls")),

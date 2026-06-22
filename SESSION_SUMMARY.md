@@ -37,6 +37,31 @@
 | PUT/PATCH | `/api/auth/profile/` | JWT | Updated user object |
 
 ### Phase A: Cart, Order & Checkout (Backend)
+(Done)
+
+### Phase B: Contact & Newsletter (Backend)
+(Done)
+
+**New app created:** `apps/contact/`
+
+**Models:**
+| Model | Fields |
+|---|---|
+| `ContactMessage` | name, email, subject, message, is_read, created_at |
+| `NewsletterSubscriber` | email (unique), is_active, subscribed_at |
+
+**Files created:** `__init__.py`, `models.py`, `serializers.py`, `views.py`, `urls.py`, `admin.py`
+
+**Endpoints:**
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| POST | `/api/contact/` | Public | Submit contact form |
+| POST | `/api/newsletter/subscribe/` | Public | Subscribe email (idempotent) |
+| POST | `/api/newsletter/unsubscribe/` | Public | Unsubscribe by email |
+
+---
+
+### Phase A: Cart, Order & Checkout (Backend)
 
 **New app created:** `apps/orders/`
 
@@ -147,19 +172,6 @@
 ---
 
 ## Next Steps
-
-### Phase B: Contact & Newsletter
-
-- **New app:** `apps/contact/`
-- **Models:**
-  - `ContactMessage` — name, email, subject, message, is_read, created_at
-  - `NewsletterSubscriber` — email (unique), is_active, subscribed_at
-- **Endpoints:**
-  - POST `/api/contact/` — Public, submit contact form
-  - POST `/api/newsletter/subscribe/` — Public, subscribe email
-  - POST `/api/newsletter/unsubscribe/` — Public, unsubscribe
-- **Files to create:** `apps/contact/__init__.py`, `models.py`, `serializers.py`, `views.py`, `urls.py`, `admin.py`
-- **Files to modify:** `config/settings/base.py`, `config/urls.py`
 
 ### Phase C: Blog
 - **New app:** `apps/blog/`
