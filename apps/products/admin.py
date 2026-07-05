@@ -25,7 +25,7 @@ class ProductImageInline(admin.TabularInline):
 class ProductVariantInline(admin.TabularInline):
     model = ProductVariant
     extra = 1
-    fields = ("name", "sku", "price_override", "stock", "is_active", "attributes")
+    fields = ("name", "sku", "price_override", "stock", "is_active", "image", "attributes")
 
 
 class ProductResource(resources.ModelResource):

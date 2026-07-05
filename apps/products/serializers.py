@@ -18,6 +18,7 @@ class ProductVariantSerializer(serializers.ModelSerializer):
             "price_override",
             "stock",
             "is_active",
+            "image",
             "attributes",
             "sort_order",
         )

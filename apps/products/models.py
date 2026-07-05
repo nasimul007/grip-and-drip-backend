@@ -132,6 +132,7 @@ class ProductVariant(models.Model):
     )
     stock = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    image = models.ImageField(upload_to="variants/", null=True, blank=True)
     attributes = models.JSONField(default=dict, blank=True)
     sort_order = models.IntegerField(default=0)
 
