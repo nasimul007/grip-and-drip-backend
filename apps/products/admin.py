@@ -122,6 +122,7 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
 
     def regenerate_slugs(self, request, queryset):
         for product in queryset:
+            product.slug = ""
             product.save()
 
     regenerate_slugs.short_description = "Regenerate slugs for selected products"
