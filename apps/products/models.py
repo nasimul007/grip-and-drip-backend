@@ -3,6 +3,18 @@ from django.utils.text import slugify
 from ckeditor.fields import RichTextField
 
 
+def product_image_upload_to(instance, filename):
+    return f"products/images/{instance.product.slug}/{filename}"
+
+
+def product_og_upload_to(instance, filename):
+    return f"products/og/{instance.slug}/{filename}"
+
+
+def variant_image_upload_to(instance, filename):
+    return f"variants/{instance.product.slug}/{filename}"
+
+
 class Attribute(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, unique=True)
@@ -52,7 +64,7 @@ class Product(models.Model):
     attributes = models.JSONField(default=dict, blank=True)
     meta_title = models.CharField(max_length=255, blank=True)
     meta_description = models.TextField(blank=True)
-    og_image = models.ImageField(upload_to="products/og/", blank=True)
+    og_image = models.ImageField(upload_to=product_og_upload_to, blank=True)
     soft_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -109,7 +121,7 @@ class ProductImage(models.Model):
     product = models.ForeignKey(
         Product, on_delete=models.CASCADE, related_name="images"
     )
-    image = models.ImageField(upload_to="products/images/")
+    image = models.ImageField(upload_to=product_image_upload_to)
     alt_text = models.CharField(max_length=255, blank=True)
     is_primary = models.BooleanField(default=False)
     sort_order = models.IntegerField(default=0)
@@ -132,7 +144,7 @@ class ProductVariant(models.Model):
     )
     stock = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
-    image = models.ImageField(upload_to="variants/", null=True, blank=True)
+    image = models.ImageField(upload_to=variant_image_upload_to, null=True, blank=True)
     attributes = models.JSONField(default=dict, blank=True)
     sort_order = models.IntegerField(default=0)
 
