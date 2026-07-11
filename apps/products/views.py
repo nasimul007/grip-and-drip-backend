@@ -26,7 +26,7 @@ class ProductListView(generics.ListAPIView):
         "price": ["gte", "lte", "exact"],
     }
     search_fields = ["name", "description", "sku", "brand"]
-    ordering_fields = ["price", "created_at", "name"]
+    ordering_fields = ["price", "created_at", "name", "is_featured"]
 
 
 class ProductDetailView(generics.RetrieveAPIView):
