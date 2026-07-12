@@ -1,13 +1,40 @@
 import random
 from django.db.models import Q
 from rest_framework import generics, filters
-from django_filters.rest_framework import DjangoFilterBackend
+from django_filters.rest_framework import DjangoFilterBackend, FilterSet
+import django_filters
 from .models import Product
 from .serializers import (
     ProductListSerializer,
     ProductDetailSerializer,
     RelatedProductSerializer,
 )
+from apps.categories.models import Category
+
+
+class ProductFilterSet(FilterSet):
+    category = django_filters.ModelMultipleChoiceFilter(
+        queryset=Category.objects.all(),
+        method='filter_category_with_descendants',
+    )
+
+    class Meta:
+        model = Product
+        fields = {
+            "category__slug": ["exact"],
+            "is_featured": ["exact"],
+            "brand": ["exact"],
+            "price": ["gte", "lte", "exact"],
+        }
+
+    def filter_category_with_descendants(self, queryset, name, value):
+        if not value:
+            return queryset
+        all_ids = set()
+        for cat in value:
+            descendants = cat.get_descendants(include_self=True)
+            all_ids.update(descendants.values_list('id', flat=True))
+        return queryset.filter(category__in=all_ids)
 
 
 class ProductListView(generics.ListAPIView):
@@ -18,13 +45,7 @@ class ProductListView(generics.ListAPIView):
         filters.SearchFilter,
         filters.OrderingFilter,
     ]
-    filterset_fields = {
-        "category": ["exact"],
-        "category__slug": ["exact"],
-        "is_featured": ["exact"],
-        "brand": ["exact"],
-        "price": ["gte", "lte", "exact"],
-    }
+    filterset_class = ProductFilterSet
     search_fields = ["name", "description", "sku", "brand"]
     ordering_fields = ["price", "created_at", "name", "is_featured"]
 
