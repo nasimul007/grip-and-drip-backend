@@ -70,7 +70,7 @@ class ShippingAddressSerializer(serializers.ModelSerializer):
         model = ShippingAddress
         fields = (
             "full_name", "phone", "address_line1", "address_line2",
-            "city", "state", "postal_code", "country",
+            "city", "state", "country",
         )
 
 
@@ -113,7 +113,18 @@ class OrderDetailSerializer(serializers.ModelSerializer):
         )
 
 
+class OrderCreateItemSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    variant_id = serializers.IntegerField(required=False, allow_null=True)
+    quantity = serializers.IntegerField(min_value=1)
+
+
 class OrderCreateSerializer(serializers.Serializer):
     shipping_rate_id = serializers.IntegerField()
     notes = serializers.CharField(required=False, allow_blank=True)
     shipping_address = ShippingAddressSerializer()
+    payment_method = serializers.ChoiceField(
+        choices=["cash", "bkash", "bank"], default="cash"
+    )
+    payment_details = serializers.JSONField(required=False)
+    items = OrderCreateItemSerializer(many=True, required=False)

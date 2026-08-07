@@ -62,14 +62,28 @@ class Order(models.Model):
         ("cancelled", "Cancelled"),
     ]
 
+    PAYMENT_CHOICES = [
+        ("cash", "Cash on Delivery"),
+        ("bkash", "bKash"),
+        ("bank", "Bank"),
+    ]
+
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="orders"
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="orders",
+        null=True,
+        blank=True,
     )
     order_number = models.CharField(max_length=30, unique=True, editable=False)
     shipping_rate = models.ForeignKey(
         ShippingRate, on_delete=models.SET_NULL, null=True, blank=True
     )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    payment_method = models.CharField(
+        max_length=20, choices=PAYMENT_CHOICES, default="cash"
+    )
+    payment_details = models.JSONField(default=dict, blank=True)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
     shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=10, decimal_places=2)
@@ -92,7 +106,35 @@ class Order(models.Model):
                 order_number__startswith=f"ORD-{date_part}"
             ).count()
             self.order_number = f"ORD-{date_part}-{last_today + 1:04d}"
+
+        was_cancelled = False
+        if self.pk and not kwargs.get("force_insert"):
+            previous = Order.objects.filter(pk=self.pk).first()
+            if previous and previous.status != "cancelled" and self.status == "cancelled":
+                was_cancelled = True
+
         super().save(*args, **kwargs)
+
+        if was_cancelled:
+            self.restock_items()
+
+    def restock_items(self):
+        """Return reserved stock to products/variants when an order is cancelled."""
+        from django.db import transaction
+        from django.db.models import F
+
+        with transaction.atomic():
+            for item in self.items.all():
+                if item.variant_name:
+                    variants = ProductVariant.objects.filter(
+                        product__slug=item.product_slug,
+                        name=item.variant_name,
+                    )
+                    variants.update(stock=F("stock") + item.quantity)
+                else:
+                    Product.objects.filter(slug=item.product_slug).update(
+                        stock=F("stock") + item.quantity
+                    )
 
 
 class OrderItem(models.Model):
@@ -118,7 +160,6 @@ class ShippingAddress(models.Model):
     address_line2 = models.CharField(max_length=255, blank=True)
     city = models.CharField(max_length=100)
     state = models.CharField(max_length=100, blank=True)
-    postal_code = models.CharField(max_length=20)
     country = models.CharField(max_length=100, default="Bangladesh")
 
     def __str__(self):

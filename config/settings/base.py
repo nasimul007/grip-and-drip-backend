@@ -102,6 +102,9 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.AllowAny",
     ),
+    "DEFAULT_THROTTLE_RATES": {
+        "guest_order": "10/min",
+    },
 }
 
 SIMPLE_JWT = {
