@@ -9,7 +9,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ("username", "email", "password", "password2", "phone_number")
+        fields = ("email", "full_name", "password", "password2", "phone_number")
 
     def validate(self, attrs):
         if attrs["password"] != attrs.pop("password2"):
@@ -21,11 +21,23 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A user with this email already exists.")
         return value
 
+    @staticmethod
+    def _make_unique_username(base):
+        username = base
+        i = 1
+        while CustomUser.objects.filter(username=username).exists():
+            i += 1
+            username = f"{base}{i}"
+        return username
+
     def create(self, validated_data):
+        email = validated_data["email"]
+        username = self._make_unique_username(email.split("@")[0])
         user = CustomUser.objects.create_user(
-            username=validated_data["username"],
-            email=validated_data["email"],
+            username=username,
+            email=email,
             password=validated_data["password"],
+            full_name=validated_data.get("full_name", ""),
             phone_number=validated_data.get("phone_number", ""),
         )
         return user
@@ -34,5 +46,5 @@ class RegisterSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ("id", "username", "email", "phone_number", "is_vendor")
+        fields = ("id", "username", "full_name", "email", "phone_number", "is_vendor")
         read_only_fields = ("id",)
