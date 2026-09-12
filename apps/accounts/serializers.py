@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
-from .models import CustomUser
+from django.db.models import Q
+from .models import CustomUser, Address
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -61,3 +62,39 @@ class PasswordChangeSerializer(serializers.Serializer):
         if attrs["new_password"] == attrs["old_password"]:
             raise serializers.ValidationError({"new_password": "New password must be different from the old password."})
         return attrs
+
+
+class AddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = (
+            "id", "address_name", "division_id", "division_name",
+            "city_id", "city_name", "area_id", "area_name",
+            "address", "is_default_shipping", "created_at", "updated_at"
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        is_default = attrs.get("is_default_shipping", False)
+        if is_default and self.instance and self.instance.is_default_shipping:
+            return attrs
+        if is_default:
+            user = self.context["request"].user
+            if Address.objects.filter(user=user, is_default_shipping=True).exists():
+                raise serializers.ValidationError(
+                    "A default shipping address already exists. Unset it first or edit the existing default."
+                )
+        return attrs
+
+
+class AddressListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = (
+            "id", "address_name", "division_name", "city_name",
+            "area_name", "address", "is_default_shipping", "created_at"
+        )
+
+
+class SetDefaultShippingSerializer(serializers.Serializer):
+    pass
