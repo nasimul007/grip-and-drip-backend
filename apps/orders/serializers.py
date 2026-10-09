@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Cart, CartItem, Order, OrderItem, ShippingAddress, ShippingRate
+from .pricing import available_stock, unit_price
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -7,20 +8,21 @@ class CartItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_slug = serializers.SlugField(source="product.slug", read_only=True)
     product_image = serializers.SerializerMethodField()
-    price = serializers.DecimalField(
-        source="product.effective_price", max_digits=10, decimal_places=2, read_only=True
-    )
+    variant_id = serializers.IntegerField(source="variant.id", read_only=True, default=None)
     variant_name = serializers.CharField(
         source="variant.name", read_only=True, default=""
     )
+    price = serializers.SerializerMethodField()
+    compare_price = serializers.SerializerMethodField()
+    stock = serializers.SerializerMethodField()
     total = serializers.SerializerMethodField()
 
     class Meta:
         model = CartItem
         fields = (
             "id", "product_id", "product_name", "product_slug",
-            "product_image", "price", "quantity", "variant_name", "total",
-            "created_at",
+            "product_image", "variant_id", "variant_name", "price",
+            "compare_price", "stock", "quantity", "total", "created_at",
         )
 
     def get_product_image(self, obj):
@@ -30,8 +32,20 @@ class CartItemSerializer(serializers.ModelSerializer):
         first = obj.product.images.first()
         return first.image.url if first else None
 
+    def get_price(self, obj):
+        return float(unit_price(obj.product, obj.variant))
+
+    def get_compare_price(self, obj):
+        compare = obj.product.compare_price
+        if compare is not None and float(compare) > self.get_price(obj):
+            return float(compare)
+        return None
+
+    def get_stock(self, obj):
+        return available_stock(obj.product, obj.variant)
+
     def get_total(self, obj):
-        return float(obj.product.effective_price) * obj.quantity
+        return self.get_price(obj) * obj.quantity
 
 
 class CartSerializer(serializers.ModelSerializer):
@@ -43,10 +57,10 @@ class CartSerializer(serializers.ModelSerializer):
         fields = ("id", "items", "total", "created_at", "updated_at")
 
     def get_total(self, obj):
-        total = 0
-        for item in obj.items.all():
-            total += float(item.product.effective_price) * item.quantity
-        return total
+        return sum(
+            float(unit_price(item.product, item.variant)) * item.quantity
+            for item in obj.items.select_related("product", "variant")
+        )
 
 
 class CartAddSerializer(serializers.Serializer):
