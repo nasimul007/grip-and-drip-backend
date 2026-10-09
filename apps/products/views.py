@@ -101,6 +101,23 @@ class ProductListView(generics.ListAPIView):
     def get_queryset(self):
         return annotate_listing(super().get_queryset())
 
+    def filter_queryset(self, queryset):
+        """Apply filters/ordering, then list unavailable products last."""
+        queryset = super().filter_queryset(queryset)
+        has_variant_stock = Exists(
+            ProductVariant.objects.filter(
+                product=OuterRef("pk"), is_active=True, stock__gt=0
+            )
+        )
+        ordering = list(queryset.query.order_by) or list(Product._meta.ordering)
+        return queryset.annotate(
+            unavailable=Case(
+                When(Q(stock__gt=0) | has_variant_stock, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        ).order_by("unavailable", *ordering)
+
 
 class ProductFilterOptionsView(APIView):
     """
