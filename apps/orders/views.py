@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import SimpleRateThrottle
 from apps.products.models import Product, ProductVariant
+from .pricing import available_stock, unit_price
 from .models import (
     Cart, CartItem, Order, OrderItem, ShippingAddress, ShippingRate,
 )
@@ -36,6 +37,23 @@ class CartView(generics.RetrieveAPIView):
         return cart
 
 
+def _cart_response(cart, status_code=status.HTTP_200_OK, warning=None):
+    data = dict(CartSerializer(cart).data)
+    if warning:
+        data["warning"] = warning
+    return Response(data, status=status_code)
+
+
+def _cap_to_stock(product, variant, wanted):
+    """Return (quantity, warning); quantity is None when nothing is available."""
+    available = available_stock(product, variant)
+    if available <= 0:
+        return None, f"'{product.name}' is out of stock."
+    if wanted > available:
+        return available, f"Only {available} available for '{product.name}'."
+    return wanted, None
+
+
 class CartAddItemView(APIView):
     permission_classes = (IsAuthenticated,)
 
@@ -43,24 +61,39 @@ class CartAddItemView(APIView):
         serializer = CartAddSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        product = get_object_or_404(Product, id=serializer.validated_data["product_id"])
+        product = get_object_or_404(
+            Product,
+            id=serializer.validated_data["product_id"],
+            is_active=True,
+            soft_deleted=False,
+        )
         variant = None
         variant_id = serializer.validated_data.get("variant_id")
         if variant_id:
-            variant = get_object_or_404(ProductVariant, id=variant_id)
+            variant = get_object_or_404(
+                ProductVariant, id=variant_id, product=product, is_active=True
+            )
 
         cart, _ = Cart.objects.get_or_create(user=request.user)
-        cart_item, created = CartItem.objects.get_or_create(
-            cart=cart,
-            product=product,
-            variant=variant,
-            defaults={"quantity": serializer.validated_data["quantity"]},
-        )
-        if not created:
-            cart_item.quantity += serializer.validated_data["quantity"]
-            cart_item.save()
+        with transaction.atomic():
+            cart_item = CartItem.objects.filter(
+                cart=cart, product=product, variant=variant
+            ).first()
+            existing = cart_item.quantity if cart_item else 0
+            quantity, warning = _cap_to_stock(
+                product, variant, existing + serializer.validated_data["quantity"]
+            )
+            if quantity is None:
+                return Response({"detail": warning}, status=status.HTTP_400_BAD_REQUEST)
+            if cart_item:
+                cart_item.quantity = quantity
+                cart_item.save()
+            else:
+                CartItem.objects.create(
+                    cart=cart, product=product, variant=variant, quantity=quantity
+                )
 
-        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+        return _cart_response(cart, warning=warning)
 
 
 class CartItemUpdateView(APIView):
@@ -72,10 +105,20 @@ class CartItemUpdateView(APIView):
 
         serializer = CartItemUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        cart_item.quantity = serializer.validated_data["quantity"]
+        quantity, warning = _cap_to_stock(
+            cart_item.product, cart_item.variant, serializer.validated_data["quantity"]
+        )
+        if quantity is None:
+            return Response({"detail": warning}, status=status.HTTP_400_BAD_REQUEST)
+        cart_item.quantity = quantity
         cart_item.save()
 
-        return Response(CartSerializer(cart).data)
+        return _cart_response(cart, warning=warning)
+
+    def delete(self, request, item_id):
+        cart = get_object_or_404(Cart, user=request.user)
+        get_object_or_404(CartItem, id=item_id, cart=cart).delete()
+        return _cart_response(cart)
 
 
 class CartItemRemoveView(APIView):
@@ -83,10 +126,8 @@ class CartItemRemoveView(APIView):
 
     def delete(self, request, item_id):
         cart = get_object_or_404(Cart, user=request.user)
-        cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
-        cart_item.delete()
-
-        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+        get_object_or_404(CartItem, id=item_id, cart=cart).delete()
+        return _cart_response(cart)
 
 
 class CartClearView(APIView):
@@ -183,7 +224,7 @@ class OrderCreateView(APIView):
 
     def _create_order(self, request, valid, shipping_rate, line_items, user):
         subtotal = sum(
-            float(item["product"].effective_price) * item["quantity"]
+            float(unit_price(item["product"], item["variant"])) * item["quantity"]
             for item in line_items
         )
 
@@ -261,7 +302,7 @@ class OrderCreateView(APIView):
                     product_image=(
                         request.build_absolute_uri(image_url) if image_url else ""
                     ),
-                    price=float(product.effective_price),
+                    price=float(unit_price(product, variant)),
                     quantity=quantity,
                     variant_name=variant.name if variant else "",
                 )
