@@ -78,6 +78,13 @@ class ShopListingTests(APITestCase):
         res = self.client.get("/api/products/filters/?search=jbl")
         self.assertEqual({b["name"] for b in res.data["brands"]}, {"JBL"})
 
+    def test_unavailable_products_are_listed_last_for_every_sort(self):
+        names = self.names("ordering=price")
+        # Cheapest first among available ones; out-of-stock (JBL Earbuds, Old Case) at the end.
+        self.assertEqual(names, ["Case", "Anker Cable", "JBL Speaker", "Old Case", "JBL Earbuds"])
+        names = self.names("ordering=-price")
+        self.assertEqual(names[:3], ["JBL Speaker", "Anker Cable", "Case"])
+
     def test_slug_route_still_works(self):
         res = self.client.get(f"/api/products/{self.anker_deal.slug}/")
         self.assertEqual(res.status_code, 200)
