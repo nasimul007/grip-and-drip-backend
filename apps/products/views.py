@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 import django_filters
-from .models import Product, ProductVariant
+from .models import Brand, Product, ProductVariant
 from .serializers import (
     ProductListSerializer,
     ProductDetailSerializer,
@@ -149,9 +149,20 @@ class ProductFilterOptionsView(APIView):
             .order_by("-count", "brand")
         )
         price = qs.aggregate(min=Min("price"), max=Max("price"))
+        logos = {
+            b.name.lower(): request.build_absolute_uri(b.logo.url)
+            for b in Brand.objects.exclude(logo="")
+        }
         return Response(
             {
-                "brands": [{"name": b["brand"], "count": b["count"]} for b in brands],
+                "brands": [
+                    {
+                        "name": b["brand"],
+                        "count": b["count"],
+                        "logo": logos.get(b["brand"].lower()),
+                    }
+                    for b in brands
+                ],
                 "price": {
                     "min": int(price["min"] // 1) if price["min"] is not None else 0,
                     "max": int(-(-price["max"] // 1)) if price["max"] is not None else 0,

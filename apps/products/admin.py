@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from import_export.admin import ImportExportModelAdmin
 from import_export import resources
-from .models import Product, ProductImage, ProductVariant, Attribute, AttributeValue
+from .models import Brand, Product, ProductImage, ProductVariant, Attribute, AttributeValue
 
 
 class ProductImageInline(admin.TabularInline):
@@ -162,3 +162,19 @@ class AttributeValueAdmin(admin.ModelAdmin):
     list_display = ("attribute", "value", "slug")
     list_filter = ("attribute",)
     prepopulated_fields = {"slug": ("value",)}
+
+
+@admin.register(Brand)
+class BrandAdmin(admin.ModelAdmin):
+    list_display = ("name", "logo_preview")
+    search_fields = ("name",)
+
+    def logo_preview(self, obj):
+        if obj.logo:
+            return format_html(
+                '<img src="{}" style="max-height: 40px; max-width: 80px;" />',
+                obj.logo.url,
+            )
+        return ""
+
+    logo_preview.short_description = "Logo"
