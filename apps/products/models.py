@@ -122,8 +122,14 @@ class Product(models.Model):
         return self.compare_price is not None and self.compare_price > self.price
 
     @property
+    def total_stock(self):
+        """Own stock plus stock of active variants (uses prefetched variants if present)."""
+        variant_stock = sum(v.stock for v in self.variants.all() if v.is_active)
+        return self.stock + variant_stock
+
+    @property
     def in_stock(self):
-        return self.stock > 0
+        return self.total_stock > 0
 
     def get_meta_title(self):
         return self.meta_title or self.name

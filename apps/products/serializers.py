@@ -32,6 +32,9 @@ class ProductListSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, read_only=True
     )
 
+    total_stock = serializers.IntegerField(read_only=True)
+    in_stock = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = Product
         fields = (
@@ -45,6 +48,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "compare_price",
             "effective_price",
             "stock",
+            "total_stock",
+            "in_stock",
             "is_active",
             "is_featured",
             "brand",
@@ -72,6 +77,9 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     breadcrumb = serializers.SerializerMethodField()
     schema_markup = serializers.SerializerMethodField()
 
+    total_stock = serializers.IntegerField(read_only=True)
+    in_stock = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = Product
         fields = (
@@ -86,6 +94,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             "effective_price",
             "sku",
             "stock",
+            "total_stock",
+            "in_stock",
             "is_active",
             "is_featured",
             "brand",
@@ -117,6 +127,9 @@ class RelatedProductSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, read_only=True
     )
 
+    total_stock = serializers.IntegerField(read_only=True)
+    in_stock = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = Product
         fields = (
@@ -128,6 +141,8 @@ class RelatedProductSerializer(serializers.ModelSerializer):
             "compare_price",
             "effective_price",
             "stock",
+            "total_stock",
+            "in_stock",
             "brand",
         )
 
