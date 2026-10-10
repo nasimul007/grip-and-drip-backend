@@ -1,3 +1,4 @@
+import csv
 import html
 import json
 import mimetypes
@@ -31,6 +32,7 @@ VOID_TAGS = {
     "link", "meta", "source", "track", "wbr",
 }
 DESCRIPTION_HINTS = ("description", "product-detail", "product_detail", "product-info")
+SPEC_HINTS = ("specification", "spec-", "specs", "additional-info", "additional_info", "product-attributes", "product_attributes", "tech-spec")
 GALLERY_HINTS = ("gallery", "product-image", "product__media", "product-media", "product-photo")
 IMAGE_BLOCKLIST = ("logo", "sprite", "icon", "placeholder", "favicon", "badge", "payment")
 MIN_IMAGE_BYTES = 2048
@@ -50,6 +52,7 @@ class PageParser(HTMLParser):
         self.h1 = ""
         self.description_blocks = []
         self.gallery_images = []
+        self.spec_rows = []
 
         self._script_ld = False
         self._script_buf = []
@@ -62,6 +65,11 @@ class PageParser(HTMLParser):
         self._desc = None
         # (tag, depth) for an open gallery container
         self._gallery = None
+        # (tag, depth) for an open specifications container, plus cell capture
+        self._spec = None
+        self._cells = []
+        self._cell_tag = None
+        self._cell_buf = []
 
     @staticmethod
     def _hint(attrs, hints):
@@ -119,6 +127,18 @@ class PageParser(HTMLParser):
         elif tag not in VOID_TAGS and self._hint(attrs, GALLERY_HINTS):
             self._gallery = (tag, 1)
 
+        if self._spec:
+            s_tag, depth = self._spec
+            if tag == s_tag:
+                self._spec = (s_tag, depth + 1)
+            if tag == "tr":
+                self._cells = []
+            elif tag in ("th", "td", "dt", "dd"):
+                self._cell_tag, self._cell_buf = tag, []
+        elif tag not in VOID_TAGS and self._hint(attrs, SPEC_HINTS):
+            self._spec = (tag, 1)
+            self._cells = []
+
     def handle_startendtag(self, tag, attrs_list):
         self.handle_starttag(tag, attrs_list)
         if tag not in VOID_TAGS:
@@ -160,6 +180,30 @@ class PageParser(HTMLParser):
                 depth -= 1
             self._gallery = (g_tag, depth) if depth else None
 
+        if self._spec:
+            s_tag, depth = self._spec
+            if tag in ("th", "td", "dt", "dd") and self._cell_tag == tag:
+                text = re.sub(r"\s+", " ", "".join(self._cell_buf)).strip()
+                self._cell_tag = None
+                if tag == "dd":
+                    if self._cells and self._cells[-1][0] == "dt":
+                        self._add_spec(self._cells[-1][1], text)
+                    self._cells = []
+                else:
+                    self._cells.append((tag, text))
+            elif tag == "tr":
+                if len(self._cells) == 2:
+                    self._add_spec(self._cells[0][1], self._cells[1][1])
+                self._cells = []
+            if tag == s_tag:
+                depth -= 1
+            self._spec = (s_tag, depth) if depth else None
+
+    def _add_spec(self, label, value):
+        label = label.strip().rstrip(":").strip()
+        if label and value and len(label) <= 60 and len(value) <= 300:
+            self.spec_rows.append((label, value))
+
     def handle_data(self, data):
         if self._script_ld:
             self._script_buf.append(data)
@@ -170,6 +214,8 @@ class PageParser(HTMLParser):
             self.title += data
         if self._in_h1:
             self.h1 += data
+        if self._spec and self._cell_tag:
+            self._cell_buf.append(data)
         if self._desc:
             self._desc[2].append(html.escape(data, quote=False))
 
@@ -347,6 +393,7 @@ def extract_product(page_html, base_url):
 
     name = description = ""
     images = []
+    specs = {}
 
     for blob in parser.ld_json:
         try:
@@ -359,6 +406,10 @@ def extract_product(page_html, base_url):
             name = name or str(node.get("name") or "").strip()
             description = description or str(node.get("description") or "").strip()
             images.extend(_ld_images(node.get("image")))
+            props = node.get("additionalProperty") or []
+            for prop in props if isinstance(props, list) else [props]:
+                if isinstance(prop, dict) and prop.get("name") and prop.get("value") not in (None, ""):
+                    specs.setdefault(str(prop["name"]).strip(), str(prop["value"]).strip())
             for variant in node.get("hasVariant") or []:
                 if isinstance(variant, dict):
                     images.extend(_ld_images(variant.get("image")))
@@ -391,7 +442,15 @@ def extract_product(page_html, base_url):
     images.extend(meta.get("image_src", []))
     images.extend(parser.gallery_images)
 
-    return {"name": name, "description": description, "images": normalize_images(images, base_url)}
+    for label, value in parser.spec_rows:
+        specs.setdefault(label, value)
+
+    return {
+        "name": name,
+        "description": description,
+        "images": normalize_images(images, base_url),
+        "specs": specs,
+    }
 
 
 def normalize_images(urls, base_url):
@@ -464,26 +523,52 @@ def download_image(url, referer):
 # ── Command ───────────────────────────────────────────────────────────────
 
 
+def _valid_url(url):
+    return url.lower().startswith(("http://", "https://"))
+
+
 def parse_input(path):
+    """Returns ([(ref, url)], errors). ref is a product ID or SKU string.
+
+    Accepts a .csv with an id or sku column plus a url column, or text lines
+    of 'ID: URL'.
+    """
     entries, errors = [], []
-    for lineno, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    p = Path(path)
+    if p.suffix.lower() == ".csv":
+        with p.open(newline="", encoding="utf-8-sig") as fh:
+            reader = csv.DictReader(fh)
+            for lineno, row in enumerate(reader, 2):
+                row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+                ref = row.get("id") or row.get("sku")
+                url = row.get("url") or row.get("source_url") or row.get("link") or ""
+                if not ref and not url:
+                    continue
+                if not ref or not _valid_url(url):
+                    errors.append(f"line {lineno}: need an id or sku and a valid url")
+                    continue
+                entries.append((ref, url))
+        return entries, errors
+
+    for lineno, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         pid, sep, url = line.partition(":")
         url = url.strip()
-        if not sep or not pid.strip().isdigit() or not url.lower().startswith(("http://", "https://")):
+        if not sep or not pid.strip().isdigit() or not _valid_url(url):
             errors.append(f"line {lineno}: cannot parse '{line}' (expected 'ID: https://...')")
             continue
-        entries.append((int(pid.strip()), url))
+        entries.append((pid.strip(), url))
     return entries, errors
 
 
 class Command(BaseCommand):
     help = (
-        "Scrape name, description and images from product links "
-        "('ID: URL' per line) and overwrite the matching products. "
-        "Existing product gallery images are deleted and replaced."
+        "Scrape description, images and specs from product links ('ID: URL' "
+        "lines or a CSV with id/sku + url columns). By default only missing "
+        "data is filled; use --overwrite to replace existing name, description, "
+        "specs and gallery images."
     )
 
     def add_arguments(self, parser):
@@ -495,9 +580,13 @@ class Command(BaseCommand):
         parser.add_argument("--max-images", type=int, default=6)
         parser.add_argument("--delay", type=float, default=1.5,
                             help="Seconds to wait between products (default 1.5)")
-        parser.add_argument("--keep-name", action="store_true", help="Do not overwrite product names")
+        parser.add_argument("--overwrite", action="store_true",
+                            help="Replace existing name, description, specs and images (default: fill only what is missing)")
+        parser.add_argument("--keep-name", action="store_true", help="With --overwrite: keep product names")
         parser.add_argument("--keep-description", action="store_true",
-                            help="Do not overwrite product descriptions")
+                            help="With --overwrite: keep product descriptions")
+        parser.add_argument("--report", default="scrape_report.csv",
+                            help="CSV file listing the result for every product (default scrape_report.csv)")
 
     def handle(self, *args, **opts):
         if not Path(opts["file"]).is_file():
@@ -506,51 +595,79 @@ class Command(BaseCommand):
         entries, parse_errors = parse_input(opts["file"])
         for err in parse_errors:
             self.stderr.write(self.style.WARNING(f"  skip {err}"))
-        if opts["only"]:
-            wanted = set(opts["only"])
-            entries = [e for e in entries if e[0] in wanted]
         if not entries:
             raise CommandError("No valid 'ID: URL' lines to process.")
 
-        products = Product.objects.in_bulk([pid for pid, _ in entries])
-        ok = failed = 0
-        mode = "DRY RUN — " if opts["dry_run"] else ""
-        self.stdout.write(f"{mode}Processing {len(entries)} product link(s)\n")
+        by_id = {int(r): u for r, u in entries if r.isdigit()}
+        skus = [r for r, _ in entries if not r.isdigit()]
+        products = Product.objects.in_bulk(list(by_id))
+        by_sku = {p.sku: p for p in Product.objects.filter(sku__in=skus)}
+        resolved = []
+        for ref, url in entries:
+            product = products.get(int(ref)) if ref.isdigit() else by_sku.get(ref)
+            resolved.append((ref, product, url))
+        if opts["only"]:
+            wanted = set(opts["only"])
+            resolved = [r for r in resolved if r[1] and r[1].pk in wanted]
 
-        for index, (pid, url) in enumerate(entries):
+        ok = failed = 0
+        report = []
+        mode = "DRY RUN — " if opts["dry_run"] else ""
+        self.stdout.write(f"{mode}Processing {len(resolved)} product link(s)\n")
+
+        for index, (ref, product, url) in enumerate(resolved):
             if index:
                 time.sleep(opts["delay"])
-            product = products.get(pid)
             if not product:
                 failed += 1
-                self.stderr.write(self.style.ERROR(f"✗ #{pid}: product not found in DB"))
+                report.append((ref, "", "failed", "product not found in DB"))
+                self.stderr.write(self.style.ERROR(f"✗ {ref}: product not found in DB"))
                 continue
             try:
                 summary = self.process(product, url, opts)
             except Exception as exc:  # one bad site must not stop the run
                 failed += 1
-                self.stderr.write(self.style.ERROR(f"✗ #{pid} {url}: {exc}"))
+                report.append((ref, product.pk, "failed", str(exc)))
+                self.stderr.write(self.style.ERROR(f"✗ #{product.pk} {url}: {exc}"))
                 continue
             ok += 1
-            self.stdout.write(self.style.SUCCESS(f"✓ #{pid} {summary}"))
+            report.append((ref, product.pk, "ok", summary.splitlines()[0]))
+            self.stdout.write(self.style.SUCCESS(f"✓ #{product.pk} {summary}"))
+
+        if report and not opts["dry_run"]:
+            with open(opts["report"], "w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["ref", "product_id", "status", "detail"])
+                w.writerows(report)
+            self.stdout.write(f"Report written to {opts['report']}")
 
         self.stdout.write(f"\nDone: {ok} updated, {failed} failed, {len(parse_errors)} unparsable line(s).")
 
     def process(self, product, url, opts):
+        overwrite = opts["overwrite"]
         page = fetch_page(url)
         data = extract_product(page, url)
 
-        name = "" if opts["keep_name"] else data["name"][:255]
-        description = "" if opts["keep_description"] else data["description"]
-        image_urls = data["images"]
+        name = data["name"][:255] if overwrite and not opts["keep_name"] else ""
+        has_desc = plain_length(product.description) > 0
+        description = data["description"] if (overwrite and not opts["keep_description"]) or not has_desc else ""
+        specs = data["specs"]
+        if not overwrite:
+            existing = {k.lower() for k in (product.attributes or {})}
+            specs = {k: v for k, v in specs.items() if k.lower() not in existing}
+        want_images = overwrite or not product.images.exists()
+        image_urls = data["images"] if want_images else []
 
-        if not (name or description or image_urls):
-            raise ValueError("nothing found on page (blocked or JavaScript-rendered?)")
+        if not (name or description or image_urls or specs):
+            if want_images or not has_desc or data["specs"]:
+                raise ValueError("nothing found on page (blocked or JavaScript-rendered?)")
+            return f"{product.name} — already complete, skipped"
 
         if opts["dry_run"]:
             lines = [
-                f"{product.name!r} → {name or '(unchanged)'!r}",
+                f"{product.name!r} → {name or '(name unchanged)'!r}",
                 f"    description: {plain_length(description)} chars" if description else "    description: (unchanged)",
+                f"    specs: {len(specs)} found" + "".join(f"\n      {k}: {v}" for k, v in list(specs.items())[:8]),
                 f"    images found: {len(image_urls)} (would use {min(len(image_urls), opts['max_images'])})",
             ]
             lines += [f"      {u}" for u in image_urls[: opts["max_images"]]]
@@ -575,14 +692,23 @@ class Command(BaseCommand):
             if description:
                 product.description = description
                 update_fields.append("description")
+                if not product.meta_description:
+                    product.meta_description = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", description))).strip()[:300]
+                    update_fields.append("meta_description")
+            if specs:
+                merged = dict(product.attributes or {})
+                merged.update(specs)
+                product.attributes = merged
+                update_fields.append("attributes")
             product.save(update_fields=update_fields)
 
             removed = 0
             if downloaded:
-                for old in list(product.images.all()):
-                    old.image.delete(save=False)
-                    old.delete()
-                    removed += 1
+                if overwrite:
+                    for old in list(product.images.all()):
+                        old.image.delete(save=False)
+                        old.delete()
+                        removed += 1
                 for i, (content, ext) in enumerate(downloaded):
                     ProductImage.objects.create(
                         product=product,
@@ -592,9 +718,10 @@ class Command(BaseCommand):
                         sort_order=i,
                     )
 
-        msg = f"{product.name} — {len(downloaded)} new image(s), {removed} old removed"
-        if not downloaded:
-            msg += " (no image downloaded; old images kept)"
+        msg = (f"{product.name} — {len(downloaded)} new image(s), {removed} old removed, "
+               f"{len(specs)} spec(s), description {'set' if description else 'kept'}")
+        if want_images and not downloaded:
+            msg += " (no image downloaded)"
         if image_errors:
             msg += "".join(f"\n    image skipped: {e}" for e in image_errors)
         return msg
