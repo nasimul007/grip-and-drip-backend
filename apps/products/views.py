@@ -99,7 +99,7 @@ class ProductListView(generics.ListAPIView):
     ]
 
     def get_queryset(self):
-        return annotate_listing(super().get_queryset())
+        return annotate_listing(super().get_queryset()).prefetch_related("variants")
 
     def filter_queryset(self, queryset):
         """Apply filters/ordering, then list unavailable products last."""
@@ -194,7 +194,7 @@ class RelatedProductsView(generics.ListAPIView):
             category=product.category,
             is_active=True,
             soft_deleted=False,
-        ).exclude(pk=product.pk)
+        ).exclude(pk=product.pk).prefetch_related("variants")
 
         related_list = list(related)
         random.shuffle(related_list)
@@ -216,4 +216,4 @@ class ProductSearchView(generics.ListAPIView):
                 | Q(sku__icontains=q)
                 | Q(brand__icontains=q)
             )
-        )
+        ).prefetch_related("variants")

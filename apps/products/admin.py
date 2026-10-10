@@ -55,6 +55,7 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
         "category",
         "price",
         "stock",
+        "total_stock_display",
         "is_active",
         "is_featured",
         "created_at",
@@ -98,6 +99,14 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
             {"fields": ("attributes", "soft_deleted"), "classes": ("collapse",)},
         ),
     )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("variants")
+
+    def total_stock_display(self, obj):
+        return obj.total_stock
+
+    total_stock_display.short_description = "Stock (incl. variants)"
 
     def thumbnail_preview(self, obj):
         primary = obj.images.filter(is_primary=True).first()
