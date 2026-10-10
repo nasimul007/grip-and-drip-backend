@@ -15,6 +15,23 @@ def variant_image_upload_to(instance, filename):
     return f"variants/{instance.product.slug}/{filename}"
 
 
+def brand_logo_upload_to(instance, filename):
+    return f"brands/{filename}"
+
+
+class Brand(models.Model):
+    """Optional logo for a brand name used in Product.brand (matched by name)."""
+
+    name = models.CharField(max_length=255, unique=True)
+    logo = models.ImageField(upload_to=brand_logo_upload_to, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
 class Attribute(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, unique=True)
