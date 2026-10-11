@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -233,8 +234,9 @@ class DescriptionSanitizer(HTMLParser):
     BREAKS = {"div", "section", "article", "br", "hr"}
     HEADING_MAP = {"h1": "h3", "h2": "h3", "h5": "h4", "h6": "h4"}
 
-    def __init__(self):
+    def __init__(self, base_url=""):
         super().__init__(convert_charrefs=True)
+        self.base_url = base_url
         self.out = []
         self.stack = []
         self._drop = 0
@@ -267,6 +269,9 @@ class DescriptionSanitizer(HTMLParser):
         if self._drop:
             return
         tag = self.HEADING_MAP.get(tag, tag)
+        if tag == "img":
+            self._image(dict(attrs))
+            return
         if tag in self.BREAKS:
             self._emit("<br>" if self.stack and tag == "br" else "\n")
             return
@@ -286,8 +291,20 @@ class DescriptionSanitizer(HTMLParser):
         self.out.append(f"<{tag}>")
         self.stack.append(tag)
 
+    def _image(self, attrs):
+        src = description_image_src(attrs, self.base_url)
+        if not src:
+            return
+        alt = html.escape(html.unescape(attrs.get("alt") or "").strip()[:200], quote=True)
+        tag = f'<img src="{html.escape(src, quote=True)}" alt="{alt}">'
+        if self.stack:
+            self.out.append(tag)
+        else:
+            self._flush_loose()
+            self.out.append(f"<p>{tag}</p>")
+
     def handle_startendtag(self, tag, attrs):
-        if tag in self.BREAKS:
+        if tag in self.BREAKS or tag == "img":
             self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
@@ -322,11 +339,30 @@ class DescriptionSanitizer(HTMLParser):
 
 
 HTML_TAG_RE = re.compile(
-    r"</?(p|br|ul|ol|li|div|span|strong|b|em|i|h[1-6]|table|tr|td|section)\b[^>]*>", re.I
+    r"</?(p|br|ul|ol|li|div|span|strong|b|em|i|h[1-6]|table|tr|td|section|img)\b[^>]*>", re.I
 )
 
 
-def sanitize_description(raw):
+def description_image_src(attrs, base_url):
+    """Best usable image URL from an <img> tag's attributes, or ''."""
+    attrs = {k.lower(): (v or "") for k, v in attrs.items()}
+    candidates = []
+    for key in ("data-src", "data-lazy-src", "data-original", "src"):
+        candidates.append(attrs.get(key, ""))
+    for key in ("data-srcset", "srcset"):
+        if attrs.get(key):
+            candidates.insert(0, attrs[key].split(",")[-1].strip().split(" ")[0])
+    for raw in candidates:
+        url = html.unescape(raw.strip())
+        if not url or url.startswith("data:"):
+            continue
+        out = normalize_images([url], base_url)
+        if out:
+            return out[0]
+    return ""
+
+
+def sanitize_description(raw, base_url=""):
     if not raw:
         return ""
     raw = raw.strip()
@@ -334,7 +370,7 @@ def sanitize_description(raw):
         # Plain text (JSON-LD/meta), possibly entity-encoded: one paragraph per line.
         paras = [p.strip() for p in re.split(r"\r?\n+", raw) if p.strip()]
         return "".join(f"<p>{html.escape(html.unescape(p), quote=False)}</p>" for p in paras)
-    parser = DescriptionSanitizer()
+    parser = DescriptionSanitizer(base_url)
     parser.feed(raw)
     parser.close()
     return parser.result()
@@ -434,7 +470,7 @@ def extract_product(page_html, base_url):
         description = best_block
     else:
         description = meta_desc
-    description = sanitize_description(description)
+    description = sanitize_description(description, base_url)
 
     images.extend(meta.get("og:image", []))
     images.extend(meta.get("og:image:secure_url", []))
@@ -450,6 +486,9 @@ def extract_product(page_html, base_url):
         "description": description,
         "images": normalize_images(images, base_url),
         "specs": specs,
+        "meta_description": html.unescape(re.sub(r"\s+", " ", meta_desc or "")).strip(),
+        "og_image": next(iter(normalize_images(
+            meta.get("og:image", []) + meta.get("og:image:secure_url", []), base_url)), ""),
     }
 
 
@@ -475,6 +514,75 @@ def normalize_images(urls, base_url):
         seen.add(key)
         out.append(url)
     return out
+
+
+# ── SEO + description images ──────────────────────────────────────────────
+
+
+def html_to_text(fragment):
+    text = re.sub(r"<(?!/?(?:p|li|br)\b)[^>]+>", " ", fragment or "")
+    text = re.sub(r"</?(?:p|li|br)\b[^>]*>", " ", text)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def _truncate(text, limit):
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    stop = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if stop >= limit * 0.6:
+        return cut[: stop + 1]
+    return cut.rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
+
+
+def build_meta_title(name, brand=""):
+    """<= 60 chars, e.g. 'Anker 20W Charger Price in Bangladesh'."""
+    name = re.sub(r"\s+", " ", name or "").strip()
+    if brand and brand.lower() not in name.lower():
+        name = f"{brand} {name}"
+    suffix = " Price in Bangladesh"
+    if len(name) + len(suffix) <= 60:
+        return name + suffix
+    return _truncate(name, 60) if len(name) > 60 else name
+
+
+def build_meta_description(description_html, fallback="", name="", brand=""):
+    text = html_to_text(description_html) or (fallback or "").strip()
+    if not text:
+        by = f" by {brand}" if brand else ""
+        text = f"Buy {name}{by} online in Bangladesh at the best price. Cash on delivery available."
+    return _truncate(text, 155)
+
+
+IMG_SRC_RE = re.compile(r'(<img src=")([^"]*)(")')
+
+
+def localize_description_images(description, product, page_url, limit, skip_urls=()):
+    """Download <img> files in a sanitized description into media storage and
+    rewrite their src to the stored copy. Images that fail are removed.
+    Returns (html, saved_count)."""
+    state = {"n": 0}
+    skip = {re.sub(r"([_-]\d+x\d*|@\dx)(?=\.\w+$)", "", u.split("?")[0]) for u in skip_urls}
+
+    def replace(match):
+        url = html.unescape(match.group(2))
+        if state["n"] >= limit or re.sub(r"([_-]\d+x\d*|@\dx)(?=\.\w+$)", "", url.split("?")[0]) in skip:
+            return match.group(1) + "\0" + match.group(3)
+        try:
+            content, ext = download_image(url, referer=page_url)
+        except Exception:
+            return match.group(1) + "\0" + match.group(3)
+        name = default_storage.save(
+            f"products/description/{product.slug}/{state['n']}{ext}", ContentFile(content)
+        )
+        state["n"] += 1
+        return match.group(1) + html.escape(default_storage.url(name), quote=True) + match.group(3)
+
+    out = IMG_SRC_RE.sub(replace, description)
+    # Drop any <img> (and an emptied <p> wrapper) whose src was marked for removal.
+    out = re.sub(r'<img src="\0"[^>]*>', "", out)
+    out = re.sub(r"<p>\s*</p>", "", out)
+    return out, state["n"]
 
 
 # ── Networking ────────────────────────────────────────────────────────────
@@ -585,6 +693,12 @@ class Command(BaseCommand):
         parser.add_argument("--keep-name", action="store_true", help="With --overwrite: keep product names")
         parser.add_argument("--keep-description", action="store_true",
                             help="With --overwrite: keep product descriptions")
+        parser.add_argument("--max-desc-images", type=int, default=10,
+                            help="Max images to keep from the description (default 10)")
+        parser.add_argument("--no-desc-images", action="store_true",
+                            help="Strip images from the description instead of saving them")
+        parser.add_argument("--keep-seo", action="store_true",
+                            help="Do not touch meta_title, meta_description and og_image")
         parser.add_argument("--report", default="scrape_report.csv",
                             help="CSV file listing the result for every product (default scrape_report.csv)")
 
@@ -658,6 +772,16 @@ class Command(BaseCommand):
         want_images = overwrite or not product.images.exists()
         image_urls = data["images"] if want_images else []
 
+        seo_wanted = not opts["keep_seo"]
+        final_name = name or product.name
+        final_desc = description or product.description
+        fill_title = seo_wanted and (overwrite or not product.meta_title)
+        fill_meta_desc = seo_wanted and (overwrite or not product.meta_description)
+        fill_og = seo_wanted and (overwrite or not product.og_image)
+        meta_title = build_meta_title(final_name, product.brand) if fill_title else ""
+        meta_desc = (build_meta_description(final_desc, data["meta_description"], final_name, product.brand)
+                     if fill_meta_desc else "")
+
         if not (name or description or image_urls or specs):
             if want_images or not has_desc or data["specs"]:
                 raise ValueError("nothing found on page (blocked or JavaScript-rendered?)")
@@ -668,6 +792,11 @@ class Command(BaseCommand):
                 f"{product.name!r} → {name or '(name unchanged)'!r}",
                 f"    description: {plain_length(description)} chars" if description else "    description: (unchanged)",
                 f"    specs: {len(specs)} found" + "".join(f"\n      {k}: {v}" for k, v in list(specs.items())[:8]),
+                f"    description images: {description.count('<img ')}"
+                + (" (stripped: --no-desc-images)" if opts["no_desc_images"] else ""),
+                f"    meta_title: {meta_title or '(unchanged)'}",
+                f"    meta_description: {meta_desc or '(unchanged)'}",
+                f"    og_image: {(data['og_image'] or 'first gallery image') if fill_og else '(unchanged)'}",
                 f"    images found: {len(image_urls)} (would use {min(len(image_urls), opts['max_images'])})",
             ]
             lines += [f"      {u}" for u in image_urls[: opts["max_images"]]]
@@ -684,6 +813,28 @@ class Command(BaseCommand):
                 image_errors.append(f"{img_url}: {exc}")
 
         alt = name or product.name
+
+        desc_images = 0
+        if description:
+            if opts["no_desc_images"]:
+                description = re.sub(r"<img [^>]*>", "", description)
+                description = re.sub(r"<p>\s*</p>", "", description)
+            else:
+                description, desc_images = localize_description_images(
+                    description, product, url, opts["max_desc_images"], skip_urls=image_urls
+                )
+
+        og_file = None
+        if fill_og:
+            for cand in ([data["og_image"]] if data["og_image"] else []):
+                try:
+                    og_file = download_image(cand, referer=url)
+                    break
+                except Exception:
+                    pass
+            if og_file is None and downloaded:
+                og_file = downloaded[0]
+
         with transaction.atomic():
             update_fields = ["updated_at"]
             if name:
@@ -692,14 +843,25 @@ class Command(BaseCommand):
             if description:
                 product.description = description
                 update_fields.append("description")
-                if not product.meta_description:
-                    product.meta_description = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", description))).strip()[:300]
-                    update_fields.append("meta_description")
             if specs:
                 merged = dict(product.attributes or {})
                 merged.update(specs)
                 product.attributes = merged
                 update_fields.append("attributes")
+            if description:
+                # keep meta description in sync with the new description text
+                if fill_meta_desc:
+                    meta_desc = build_meta_description(
+                        description, data["meta_description"], final_name, product.brand)
+            if meta_title:
+                product.meta_title = meta_title
+                update_fields.append("meta_title")
+            if meta_desc:
+                product.meta_description = meta_desc
+                update_fields.append("meta_description")
+            if og_file:
+                product.og_image.save(f"og{og_file[1]}", ContentFile(og_file[0]), save=False)
+                update_fields.append("og_image")
             product.save(update_fields=update_fields)
 
             removed = 0
@@ -719,7 +881,8 @@ class Command(BaseCommand):
                     )
 
         msg = (f"{product.name} — {len(downloaded)} new image(s), {removed} old removed, "
-               f"{len(specs)} spec(s), description {'set' if description else 'kept'}")
+               f"{len(specs)} spec(s), description {'set' if description else 'kept'}"
+               f" ({desc_images} image(s)), SEO {'set' if (meta_title or meta_desc or og_file) else 'kept'}")
         if want_images and not downloaded:
             msg += " (no image downloaded)"
         if image_errors:
