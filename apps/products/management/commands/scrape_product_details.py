@@ -733,7 +733,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         if not Path(opts["file"]).is_file():
-            raise CommandError(f"File not found: {opts['file']}")
+            raise CommandError(
+                f"File not found: {opts['file']} (looked for {Path(opts['file']).resolve()}; "
+                f"run from the folder that contains manage.py or pass an absolute path)"
+            )
 
         entries, parse_errors = parse_input(opts["file"])
         for err in parse_errors:
