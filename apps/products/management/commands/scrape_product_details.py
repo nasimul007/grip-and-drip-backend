@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -635,6 +635,21 @@ def _valid_url(url):
     return url.lower().startswith(("http://", "https://"))
 
 
+TRACKING_PARAMS = {"srsltid", "fbclid", "gclid", "ref", "ref_src", "mc_cid", "mc_eid"}
+
+
+def clean_url(url):
+    """Drops tracking query parameters (srsltid, utm_*, fbclid, ...)."""
+    parts = urlsplit(url.strip())
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+             if k.lower() not in TRACKING_PARAMS and not k.lower().startswith("utm_")]
+    return urlunsplit(parts._replace(query=urlencode(query), fragment=""))
+
+
+def _is_header(ref, url):
+    return not ref.isdigit() and not _valid_url(url)
+
+
 def parse_input(path):
     """Returns ([(ref, url)], errors). ref is a product ID or SKU string.
 
@@ -655,20 +670,32 @@ def parse_input(path):
                 if not ref or not _valid_url(url):
                     errors.append(f"line {lineno}: need an id or sku and a valid url")
                     continue
-                entries.append((ref, url))
-        return entries, errors
+                entries.append((ref, clean_url(url)))
+        return _dedupe(entries, errors)
 
     for lineno, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         pid, sep, url = line.partition(":")
-        url = url.strip()
-        if not sep or not pid.strip().isdigit() or not _valid_url(url):
+        pid, url = pid.strip(), url.strip()
+        if sep and _is_header(pid, url) and not entries:
+            continue  # header row such as 'ID: Product_Link'
+        if not sep or not pid.isdigit() or not _valid_url(url):
             errors.append(f"line {lineno}: cannot parse '{line}' (expected 'ID: https://...')")
             continue
-        entries.append((pid.strip(), url))
-    return entries, errors
+        entries.append((pid, clean_url(url)))
+    return _dedupe(entries, errors)
+
+
+def _dedupe(entries, errors):
+    """Keeps the last link for a repeated product reference."""
+    last = {}
+    for ref, url in entries:
+        if ref in last and last[ref] != url:
+            errors.append(f"{ref} appears more than once; using the last link")
+        last[ref] = url
+    return list(last.items()), errors
 
 
 class Command(BaseCommand):
@@ -687,7 +714,7 @@ class Command(BaseCommand):
                             help="Process only these product IDs")
         parser.add_argument("--max-images", type=int, default=6)
         parser.add_argument("--delay", type=float, default=1.5,
-                            help="Seconds to wait between products (default 1.5)")
+                            help="Minimum seconds between requests to the same website (default 1.5)")
         parser.add_argument("--overwrite", action="store_true",
                             help="Replace existing name, description, specs and images (default: fill only what is missing)")
         parser.add_argument("--keep-name", action="store_true", help="With --overwrite: keep product names")
@@ -699,6 +726,8 @@ class Command(BaseCommand):
                             help="Strip images from the description instead of saving them")
         parser.add_argument("--keep-seo", action="store_true",
                             help="Do not touch meta_title, meta_description and og_image")
+        parser.add_argument("--resume", action="store_true",
+                            help="Skip products already marked ok in the report file (retry only failures)")
         parser.add_argument("--report", default="scrape_report.csv",
                             help="CSV file listing the result for every product (default scrape_report.csv)")
 
@@ -724,38 +753,71 @@ class Command(BaseCommand):
             wanted = set(opts["only"])
             resolved = [r for r in resolved if r[1] and r[1].pk in wanted]
 
-        ok = failed = 0
-        report = []
-        mode = "DRY RUN — " if opts["dry_run"] else ""
-        self.stdout.write(f"{mode}Processing {len(resolved)} product link(s)\n")
+        done = set()
+        rows = {}
+        if opts["resume"] and not opts["dry_run"] and Path(opts["report"]).is_file():
+            with open(opts["report"], newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    rows[r["ref"]] = (r["ref"], r["product_id"], r["status"], r["detail"])
+                    if r["status"] == "ok":
+                        done.add(r["ref"])
+            before = len(resolved)
+            resolved = [r for r in resolved if r[0] not in done]
+            self.stdout.write(f"Resuming: {before - len(resolved)} already done, {len(resolved)} left\n")
 
-        for index, (ref, product, url) in enumerate(resolved):
-            if index:
-                time.sleep(opts["delay"])
-            if not product:
-                failed += 1
-                report.append((ref, "", "failed", "product not found in DB"))
-                self.stderr.write(self.style.ERROR(f"✗ {ref}: product not found in DB"))
-                continue
-            try:
-                summary = self.process(product, url, opts)
-            except Exception as exc:  # one bad site must not stop the run
-                failed += 1
-                report.append((ref, product.pk, "failed", str(exc)))
-                self.stderr.write(self.style.ERROR(f"✗ #{product.pk} {url}: {exc}"))
-                continue
-            ok += 1
-            report.append((ref, product.pk, "ok", summary.splitlines()[0]))
-            self.stdout.write(self.style.SUCCESS(f"✓ #{product.pk} {summary}"))
-
-        if report and not opts["dry_run"]:
+        def save_report():
+            if opts["dry_run"] or not rows:
+                return
             with open(opts["report"], "w", newline="", encoding="utf-8") as fh:
                 w = csv.writer(fh)
                 w.writerow(["ref", "product_id", "status", "detail"])
-                w.writerows(report)
+                w.writerows(rows.values())
+
+        ok = failed = 0
+        failures = []
+        last_hit = {}  # host -> time of the previous request
+        total = len(resolved)
+        mode = "DRY RUN — " if opts["dry_run"] else ""
+        self.stdout.write(f"{mode}Processing {total} product link(s)\n")
+
+        for index, (ref, product, url) in enumerate(resolved, 1):
+            tag = f"[{index}/{total}]"
+            if not product:
+                failed += 1
+                rows[ref] = (ref, "", "failed", "product not found in DB")
+                failures.append((ref, "product not found in DB"))
+                self.stderr.write(self.style.ERROR(f"{tag} ✗ {ref}: product not found in DB"))
+                save_report()
+                continue
+            # Wait only if the previous request to this same site was too recent.
+            host = urlsplit(url).netloc.lower()
+            wait = opts["delay"] - (time.monotonic() - last_hit.get(host, -1e9))
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                summary = self.process(product, url, opts)
+            except Exception as exc:  # one bad site must not stop the run
+                last_hit[host] = time.monotonic()
+                failed += 1
+                rows[ref] = (ref, product.pk, "failed", str(exc))
+                failures.append((product.pk, str(exc)))
+                self.stderr.write(self.style.ERROR(f"{tag} ✗ #{product.pk} {url}: {exc}"))
+                save_report()
+                continue
+            last_hit[host] = time.monotonic()
+            ok += 1
+            rows[ref] = (ref, product.pk, "ok", summary.splitlines()[0])
+            self.stdout.write(self.style.SUCCESS(f"{tag} ✓ #{product.pk} {summary}"))
+            save_report()
+
+        if rows and not opts["dry_run"]:
             self.stdout.write(f"Report written to {opts['report']}")
 
-        self.stdout.write(f"\nDone: {ok} updated, {failed} failed, {len(parse_errors)} unparsable line(s).")
+        self.stdout.write(f"\nDone: {ok} updated, {failed} failed, {len(parse_errors)} input warning(s).")
+        if failures:
+            self.stdout.write("Failed products (fix the link or upload manually, then re-run with --resume):")
+            for pid, reason in failures:
+                self.stdout.write(f"  #{pid}: {reason}")
 
     def process(self, product, url, opts):
         overwrite = opts["overwrite"]
