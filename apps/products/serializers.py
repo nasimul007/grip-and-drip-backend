@@ -53,6 +53,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "is_active",
             "is_featured",
             "brand",
+            "warranty_months",
             "created_at",
         )
 
@@ -98,6 +99,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             "is_active",
             "is_featured",
             "brand",
+            "warranty_months",
             "attributes",
             "meta_title",
             "meta_description",
@@ -143,6 +145,7 @@ class RelatedProductSerializer(serializers.ModelSerializer):
             "total_stock",
             "in_stock",
             "brand",
+            "warranty_months",
         )
 
     def get_primary_image(self, obj):

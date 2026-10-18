@@ -43,6 +43,7 @@ class ProductResource(resources.ModelResource):
             "is_active",
             "is_featured",
             "brand",
+            "warranty_months",
         )
 
 
@@ -76,6 +77,7 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
                     "category",
                     "description",
                     "brand",
+                    "warranty_months",
                     "sku",
                 )
             },

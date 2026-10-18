@@ -78,6 +78,13 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
     brand = models.CharField(max_length=255, blank=True)
+    warranty_months = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        choices=[(3, "3 months"), (6, "6 months"), (12, "12 months"), (18, "18 months"),
+                 (24, "24 months"), (36, "36 months")],
+        help_text="Warranty period shown on product cards and the product page. Leave empty for no warranty.",
+    )
     attributes = models.JSONField(default=dict, blank=True)
     meta_title = models.CharField(max_length=255, blank=True)
     meta_description = models.TextField(blank=True)

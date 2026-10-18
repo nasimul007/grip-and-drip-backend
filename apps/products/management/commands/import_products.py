@@ -6,6 +6,17 @@ from apps.categories.models import Category
 from apps.products.models import Product, ProductVariant
 
 
+def parse_warranty_months(text):
+    """'12 Month' / '1 Year' -> 12; anything unparsable -> None."""
+    import re
+
+    m = re.search(r"(\d+)\s*(year|yr|month|mon)", text or "", re.I)
+    if not m:
+        return None
+    n = int(m.group(1))
+    return n * 12 if m.group(2).lower().startswith("y") else n
+
+
 class Command(BaseCommand):
     help = "Import products from the PDF-derived JSON data file"
 
@@ -124,6 +135,7 @@ class Command(BaseCommand):
             brand=brand,
             is_active=True,
             description=description,
+            warranty_months=parse_warranty_months(warranty),
         )
 
         # Create variants for multi-color products
