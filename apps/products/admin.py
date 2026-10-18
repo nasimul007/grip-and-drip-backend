@@ -101,7 +101,7 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
     )
 
     def get_queryset(self, request):
-        return super().get_queryset(request).prefetch_related("variants")
+        return super().get_queryset(request).prefetch_related("variants", "images")
 
     def total_stock_display(self, obj):
         return obj.total_stock
@@ -109,11 +109,11 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
     total_stock_display.short_description = "Stock (incl. variants)"
 
     def thumbnail_preview(self, obj):
-        primary = obj.images.filter(is_primary=True).first()
-        if primary and primary.image:
+        found = obj.display_image()
+        if found:
             return format_html(
                 '<img src="{}" style="max-height: 40px; max-width: 40px;" />',
-                primary.image.url,
+                found[0].url,
             )
         return "—"
 

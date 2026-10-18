@@ -131,6 +131,24 @@ class Product(models.Model):
     def in_stock(self):
         return self.total_stock > 0
 
+    def display_image(self):
+        """Image for list cards: primary product image, else the first product
+        image, else the first active variant image (in-stock variants first).
+        Returns (file, id_or_None, is_primary) or None. Uses prefetched data."""
+        images = list(self.images.all())
+        primary = next((i for i in images if i.is_primary and i.image), None)
+        first = next((i for i in images if i.image), None)
+        chosen = primary or first
+        if chosen:
+            return chosen.image, chosen.pk, chosen.is_primary
+        variants = sorted(
+            (v for v in self.variants.all() if v.is_active and v.image),
+            key=lambda v: (v.stock <= 0, v.sort_order, v.pk),
+        )
+        if variants:
+            return variants[0].image, None, False
+        return None
+
     def get_meta_title(self):
         return self.meta_title or self.name
 

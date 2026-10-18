@@ -57,13 +57,12 @@ class ProductListSerializer(serializers.ModelSerializer):
         )
 
     def get_primary_image(self, obj):
-        primary = obj.images.filter(is_primary=True).first()
-        if primary:
-            return ProductImageSerializer(primary).data
-        first_img = obj.images.first()
-        if first_img:
-            return ProductImageSerializer(first_img).data
-        return None
+        found = obj.display_image()
+        if not found:
+            return None
+        image, pk, is_primary = found
+        # Relative media URL, as the previous ProductImageSerializer output (no request context).
+        return {"id": pk, "image": image.url, "alt_text": obj.name, "is_primary": is_primary, "sort_order": 0}
 
 
 class ProductDetailSerializer(serializers.ModelSerializer):
@@ -147,13 +146,12 @@ class RelatedProductSerializer(serializers.ModelSerializer):
         )
 
     def get_primary_image(self, obj):
-        primary = obj.images.filter(is_primary=True).first()
-        if primary:
-            return ProductImageSerializer(primary).data
-        first_img = obj.images.first()
-        if first_img:
-            return ProductImageSerializer(first_img).data
-        return None
+        found = obj.display_image()
+        if not found:
+            return None
+        image, pk, is_primary = found
+        # Relative media URL, as the previous ProductImageSerializer output (no request context).
+        return {"id": pk, "image": image.url, "alt_text": obj.name, "is_primary": is_primary, "sort_order": 0}
 
 
 from apps.seo.schema import product_schema as _product_schema

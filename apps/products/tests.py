@@ -88,3 +88,27 @@ class ShopListingTests(APITestCase):
     def test_slug_route_still_works(self):
         res = self.client.get(f"/api/products/{self.anker_deal.slug}/")
         self.assertEqual(res.status_code, 200)
+
+
+class ListImageFallbackTests(APITestCase):
+    def test_variant_image_used_when_product_has_no_images(self):
+        from django.core.files.base import ContentFile
+
+        cat = Category.objects.create(name="Cases")
+        product = Product.objects.create(category=cat, name="Phone Case", price=Decimal("300"), sku="PC1", stock=0)
+        out = ProductVariant.objects.create(product=product, name="Black", sku="PC1-B", stock=0, sort_order=0)
+        out.image.save("black.jpg", ContentFile(b"x"), save=True)
+        live = ProductVariant.objects.create(product=product, name="White", sku="PC1-W", stock=3, sort_order=1)
+        live.image.save("white.jpg", ContentFile(b"x"), save=True)
+
+        res = self.client.get("/api/products/")
+        self.assertEqual(res.status_code, 200)
+        image = res.data["results"][0]["primary_image"]
+        self.assertIsNotNone(image)
+        self.assertIn("white", image["image"])  # in-stock variant preferred
+
+    def test_no_images_anywhere_gives_none(self):
+        cat = Category.objects.create(name="Misc")
+        Product.objects.create(category=cat, name="Bare", price=Decimal("10"), sku="B1", stock=1)
+        res = self.client.get("/api/products/")
+        self.assertIsNone(res.data["results"][0]["primary_image"])
