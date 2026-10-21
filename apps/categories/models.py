@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 from django.utils.text import slugify
 from mptt.models import MPTTModel, TreeForeignKey
 from ckeditor.fields import RichTextField
@@ -57,6 +58,19 @@ class Category(MPTTModel):
             {"name": ancestor.name, "slug": ancestor.slug}
             for ancestor in ancestors
         ]
+
+    def products_q(self):
+        """
+        Products listed under this category: everything in its subtree, plus
+        products filed on an ancestor whose brand matches this category's
+        name (e.g. Smartwatch > CMF shows CMF-brand products saved under
+        Smartwatch).
+        """
+        q = Q(category__in=self.get_descendants(include_self=True))
+        ancestors = self.get_ancestors()
+        if ancestors:
+            q |= Q(category__in=ancestors, brand__iexact=self.name)
+        return q
 
     def get_meta_title(self):
         return self.meta_title or self.name
