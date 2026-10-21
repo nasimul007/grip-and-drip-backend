@@ -52,11 +52,10 @@ class ProductFilterSet(FilterSet):
     def filter_category_with_descendants(self, queryset, name, value):
         if not value:
             return queryset
-        all_ids = set()
+        query = Q()
         for cat in value:
-            descendants = cat.get_descendants(include_self=True)
-            all_ids.update(descendants.values_list('id', flat=True))
-        return queryset.filter(category__in=all_ids)
+            query |= cat.products_q()
+        return queryset.filter(query)
 
 
 def annotate_listing(queryset):

@@ -112,3 +112,32 @@ class ListImageFallbackTests(APITestCase):
         Product.objects.create(category=cat, name="Bare", price=Decimal("10"), sku="B1", stock=1)
         res = self.client.get("/api/products/")
         self.assertIsNone(res.data["results"][0]["primary_image"])
+
+
+class CategoryFilterTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        watches = Category.objects.create(name="Smartwatch")
+        cls.watches = watches
+        cls.cmf = Category.objects.create(name="CMF", parent=watches)
+        Product.objects.create(category=watches, name="CMF Watch Pro", price=1, sku="W1", stock=1, brand="cmf")
+        Product.objects.create(category=watches, name="Amazfit Bip", price=1, sku="W2", stock=1, brand="Amazfit")
+        Product.objects.create(category=cls.cmf, name="CMF Watch 2", price=1, sku="W3", stock=1)
+
+    def names(self, query):
+        res = self.client.get(f"/api/products/?{query}")
+        self.assertEqual(res.status_code, 200)
+        return sorted(p["name"] for p in res.data["results"])
+
+    def test_parent_category_lists_whole_subtree(self):
+        self.assertEqual(
+            self.names(f"category={self.watches.id}"),
+            ["Amazfit Bip", "CMF Watch 2", "CMF Watch Pro"],
+        )
+
+    def test_brand_subcategory_matches_parent_products_by_brand(self):
+        self.assertEqual(self.names(f"category={self.cmf.id}"), ["CMF Watch 2", "CMF Watch Pro"])
+
+    def test_category_detail_count_matches_listing(self):
+        res = self.client.get(f"/api/categories/{self.cmf.slug}/")
+        self.assertEqual(res.data["product_count"], 2)

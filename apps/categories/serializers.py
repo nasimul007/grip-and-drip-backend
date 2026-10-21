@@ -57,4 +57,8 @@ class CategoryDetailSerializer(serializers.ModelSerializer):
         return CategorySerializer(children, many=True).data
 
     def get_product_count(self, obj):
-        return obj.products.filter(is_active=True, soft_deleted=False).count()
+        from apps.products.models import Product
+
+        return Product.objects.filter(
+            obj.products_q(), is_active=True, soft_deleted=False
+        ).count()
