@@ -45,12 +45,17 @@ class CartItemSerializer(serializers.ModelSerializer):
 
 
 class CartSerializer(serializers.ModelSerializer):
-    items = CartItemSerializer(many=True, read_only=True)
+    items = serializers.SerializerMethodField()
     total = serializers.SerializerMethodField()
 
     class Meta:
         model = Cart
         fields = ("id", "items", "total", "created_at", "updated_at")
+
+    def get_items(self, obj):
+        # Fixed order (oldest first) so editing a line never moves it.
+        items = obj.items.select_related("product", "variant").order_by("created_at", "id")
+        return CartItemSerializer(items, many=True, context=self.context).data
 
     def get_total(self, obj):
         return sum(

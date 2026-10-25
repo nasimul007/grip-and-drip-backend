@@ -232,3 +232,20 @@ class CartImageTests(APITestCase):
         self.assertIsNone(self.image_for(self.red))
         Product.objects.filter(pk=self.product.pk).update(og_image="og/case.jpg")
         self.assertTrue(self.image_for(self.red).endswith("og/case.jpg"))
+
+
+class CartOrderTests(APITestCase):
+    def test_lines_keep_their_order_when_quantity_changes(self):
+        user = User.objects.create_user(username="ord", email="ord@example.com", password="pass12345")
+        self.client.force_authenticate(user)
+        products = [
+            Product.objects.create(name=f"P{i}", price=Decimal("100"), sku=f"ORD-{i}", stock=9)
+            for i in range(3)
+        ]
+        for p in products:
+            self.client.post("/api/cart/add/", {"product_id": p.id, "quantity": 1}, format="json")
+        before = [i["id"] for i in self.client.get("/api/cart/").data["items"]]
+        for item_id in (before[0], before[-1], before[1]):
+            res = self.client.patch(f"/api/cart/items/{item_id}/", {"quantity": 3}, format="json")
+            self.assertEqual([i["id"] for i in res.data["items"]], before)
+        self.assertEqual([i["id"] for i in self.client.get("/api/cart/").data["items"]], before)
