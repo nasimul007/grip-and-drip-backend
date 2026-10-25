@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Cart, CartItem, Order, OrderItem, ShippingAddress, ShippingRate
-from .pricing import available_stock, unit_price
+from .pricing import available_stock, cart_line_image, unit_price
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -26,11 +26,7 @@ class CartItemSerializer(serializers.ModelSerializer):
         )
 
     def get_product_image(self, obj):
-        primary = obj.product.images.filter(is_primary=True).first()
-        if primary:
-            return primary.image.url
-        first = obj.product.images.first()
-        return first.image.url if first else None
+        return cart_line_image(obj.product, obj.variant)
 
     def get_price(self, obj):
         return float(unit_price(obj.product, obj.variant))

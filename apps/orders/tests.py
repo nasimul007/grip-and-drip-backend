@@ -182,3 +182,48 @@ class OrderPricingTests(APITestCase):
         )
         self.assertEqual(res.status_code, 201, res.data)
         self.assertEqual(Order.objects.get(pk=res.data["id"]).subtotal, Decimal("300"))
+
+
+class CartImageTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from apps.products.models import ProductImage
+
+        cls.user = User.objects.create_user(
+            username="imgbuyer", email="img@example.com", password="pass12345"
+        )
+        cls.category = Category.objects.create(name="Cases")
+        cls.product = Product.objects.create(
+            category=cls.category, name="Case", price=Decimal("300"), sku="CASE-1", stock=5,
+        )
+        cls.variant = ProductVariant.objects.create(
+            product=cls.product, name="Blue", sku="CASE-1-B", stock=3, image="variants/blue.jpg",
+        )
+        cls.plain_variant = ProductVariant.objects.create(
+            product=cls.product, name="Red", sku="CASE-1-R", stock=3,
+        )
+        cls.ProductImage = ProductImage
+
+    def setUp(self):
+        self.client.force_authenticate(self.user)
+
+    def image_for(self, variant=None):
+        self.client.delete("/api/cart/clear/")
+        body = {"product_id": self.product.id, "quantity": 1}
+        if variant is not None:
+            body["variant_id"] = variant.id
+        res = self.client.post("/api/cart/add/", body, format="json")
+        return res.data["items"][0]["product_image"]
+
+    def test_variant_image_wins(self):
+        self.ProductImage.objects.create(product=self.product, image="products/main.jpg", is_primary=True)
+        self.assertTrue(self.image_for(self.variant).endswith("variants/blue.jpg"))
+
+    def test_primary_image_when_variant_has_none(self):
+        self.ProductImage.objects.create(product=self.product, image="products/main.jpg", is_primary=True)
+        self.assertTrue(self.image_for(self.plain_variant).endswith("products/main.jpg"))
+
+    def test_og_image_fallback_then_none(self):
+        self.assertIsNone(self.image_for(self.plain_variant))
+        Product.objects.filter(pk=self.product.pk).update(og_image="og/case.jpg")
+        self.assertTrue(self.image_for(self.plain_variant).endswith("og/case.jpg"))
