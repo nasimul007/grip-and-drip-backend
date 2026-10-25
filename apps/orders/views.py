@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import SimpleRateThrottle
 from apps.products.models import Product, ProductVariant
-from .pricing import available_stock, unit_price
+from .pricing import available_stock, cart_line_image, unit_price
 from .models import (
     Cart, CartItem, Order, OrderItem, ShippingAddress, ShippingRate,
 )
@@ -290,10 +290,7 @@ class OrderCreateView(APIView):
                 quantity = line["quantity"]
                 variant = line["variant"]
 
-                primary_image = product.images.filter(is_primary=True).first()
-                image_url = primary_image.image.url if primary_image else ""
-                if product.images.exists() and not image_url:
-                    image_url = product.images.first().image.url
+                image_url = cart_line_image(product, variant)
 
                 OrderItem.objects.create(
                     order=order,
