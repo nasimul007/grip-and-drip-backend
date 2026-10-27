@@ -94,6 +94,11 @@ class Order(models.Model):
     class Meta:
         ordering = ["-created_at"]
 
+    @classmethod
+    def status_steps(cls):
+        """The statuses an order moves through, in order (cancelled is a dead end)."""
+        return [{"key": k, "label": label} for k, label in cls.STATUS_CHOICES if k != "cancelled"]
+
     def __str__(self):
         return self.order_number
 

@@ -89,6 +89,16 @@ class ShippingAddressSerializer(serializers.ModelSerializer):
         )
 
 
+class StatusFieldsMixin(serializers.Serializer):
+    """status_display = the label admins see; status_steps = the order's normal path."""
+
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    status_steps = serializers.SerializerMethodField()
+
+    def get_status_steps(self, obj):
+        return Order.status_steps()
+
+
 class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
@@ -98,21 +108,21 @@ class OrderItemSerializer(serializers.ModelSerializer):
         )
 
 
-class OrderListSerializer(serializers.ModelSerializer):
+class OrderListSerializer(StatusFieldsMixin, serializers.ModelSerializer):
     item_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = (
-            "id", "order_number", "status", "subtotal",
-            "shipping_cost", "total", "item_count", "created_at",
+            "id", "order_number", "status", "status_display", "status_steps",
+            "subtotal", "shipping_cost", "total", "item_count", "created_at",
         )
 
     def get_item_count(self, obj):
         return obj.items.count()
 
 
-class OrderDetailSerializer(serializers.ModelSerializer):
+class OrderDetailSerializer(StatusFieldsMixin, serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     shipping_address = ShippingAddressSerializer(read_only=True)
     shipping_area = serializers.CharField(
@@ -122,8 +132,8 @@ class OrderDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = (
-            "id", "order_number", "status", "subtotal",
-            "shipping_cost", "total", "shipping_area", "payment_method", "notes",
+            "id", "order_number", "status", "status_display", "status_steps",
+            "subtotal", "shipping_cost", "total", "shipping_area", "payment_method", "notes",
             "items", "shipping_address", "created_at", "updated_at",
         )
 
@@ -145,7 +155,7 @@ class OrderCreateSerializer(serializers.Serializer):
     items = OrderCreateItemSerializer(many=True, required=False)
 
 
-class OrderTrackSerializer(serializers.ModelSerializer):
+class OrderTrackSerializer(StatusFieldsMixin, serializers.ModelSerializer):
     """What a guest may see after proving they know the order number and phone."""
 
     items = OrderItemSerializer(many=True, read_only=True)
@@ -158,7 +168,8 @@ class OrderTrackSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = (
-            "order_number", "status", "payment_method", "subtotal",
+            "order_number", "status", "status_display", "status_steps",
+            "payment_method", "subtotal",
             "shipping_cost", "total", "shipping_area", "customer_name",
             "delivery_area", "items", "created_at", "updated_at",
         )

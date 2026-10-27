@@ -297,3 +297,13 @@ class OrderTrackTests(APITestCase):
         short = self.track(order["order_number"], "123")
         self.assertEqual((wrong.status_code, unknown.status_code, short.status_code), (404, 404, 404))
         self.assertEqual(wrong.data, unknown.data)
+
+    def test_status_label_and_steps_follow_the_model(self):
+        order = self.place()
+        Order.objects.filter(order_number=order["order_number"]).update(status="shipped")
+        res = self.track(order["order_number"], "01712345678")
+        self.assertEqual(res.data["status_display"], "Shipped")
+        self.assertEqual(
+            [s["key"] for s in res.data["status_steps"]],
+            ["pending", "confirmed", "processing", "shipped", "delivered"],
+        )
