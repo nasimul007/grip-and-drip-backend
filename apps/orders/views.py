@@ -15,6 +15,7 @@ from .serializers import (
     CartSerializer, CartAddSerializer, CartItemUpdateSerializer,
     ShippingRateSerializer, OrderCreateSerializer,
     OrderListSerializer, OrderDetailSerializer,
+    OrderTrackSerializer, OrderTrackRequestSerializer,
 )
 
 
@@ -348,3 +349,47 @@ class OrderDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return Order.objects.filter(user=self.request.user)
+
+
+class OrderTrackThrottle(SimpleRateThrottle):
+    """Slows down guessing of order numbers and phone numbers."""
+
+    scope = "order_track"
+    rate = "20/hour"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+def _phone_digits(value: str) -> str:
+    """Last 10 digits, so 017..., +88017... and 88017... all compare equal."""
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return digits[-10:]
+
+
+class OrderTrackView(APIView):
+    """Public order lookup: the order number plus the phone used at checkout."""
+
+    permission_classes = (AllowAny,)
+    throttle_classes = [OrderTrackThrottle]
+
+    def post(self, request):
+        body = OrderTrackRequestSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        number = body.validated_data["order_number"].strip().upper()
+        phone = _phone_digits(body.validated_data["phone"])
+
+        order = (
+            Order.objects.filter(order_number=number)
+            .select_related("shipping_address", "shipping_rate")
+            .prefetch_related("items")
+            .first()
+        )
+        address = getattr(order, "shipping_address", None) if order else None
+        # One answer for "no such order" and "wrong phone" so numbers cannot be probed.
+        if not order or not address or len(phone) < 10 or _phone_digits(address.phone) != phone:
+            return Response(
+                {"error": "We could not find an order with that number and phone."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(OrderTrackSerializer(order).data)

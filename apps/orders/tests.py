@@ -249,3 +249,51 @@ class CartOrderTests(APITestCase):
             res = self.client.patch(f"/api/cart/items/{item_id}/", {"quantity": 3}, format="json")
             self.assertEqual([i["id"] for i in res.data["items"]], before)
         self.assertEqual([i["id"] for i in self.client.get("/api/cart/").data["items"]], before)
+
+
+class OrderTrackTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.rate = ShippingRate.objects.create(area_type="inside_dhaka", charge=Decimal("60"))
+        cls.product = Product.objects.create(name="Track Item", price=Decimal("500"), sku="TRK-1", stock=9)
+
+    def place(self):
+        res = self.client.post(
+            "/api/orders/",
+            {
+                "shipping_rate_id": self.rate.id,
+                "payment_method": "cash",
+                "shipping_address": {
+                    "full_name": "Rahim Uddin", "phone": "01712345678",
+                    "address_line1": "House 1", "city": "Dhanmondi, Dhaka",
+                    "state": "Dhaka", "country": "Bangladesh",
+                },
+                "items": [{"product_id": self.product.id, "quantity": 2}],
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.data)
+        return res.data
+
+    def track(self, number, phone):
+        return self.client.post("/api/orders/track/", {"order_number": number, "phone": phone}, format="json")
+
+    def test_phone_formats_match_and_response_hides_private_data(self):
+        order = self.place()
+        self.assertEqual(order["payment_method"], "cash")
+        for phone in ("01712345678", "+8801712345678", "880 1712-345678"):
+            res = self.track(order["order_number"].lower(), phone)
+            self.assertEqual(res.status_code, 200, phone)
+        self.assertEqual(res.data["customer_name"], "Rahim")
+        self.assertEqual(res.data["status"], "pending")
+        self.assertEqual(len(res.data["items"]), 1)
+        self.assertNotIn("phone", str(res.data))
+        self.assertNotIn("address_line1", res.data)
+
+    def test_wrong_phone_and_unknown_order_look_the_same(self):
+        order = self.place()
+        wrong = self.track(order["order_number"], "01799999999")
+        unknown = self.track("ORD-19990101-0001", "01712345678")
+        short = self.track(order["order_number"], "123")
+        self.assertEqual((wrong.status_code, unknown.status_code, short.status_code), (404, 404, 404))
+        self.assertEqual(wrong.data, unknown.data)

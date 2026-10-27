@@ -123,7 +123,7 @@ class OrderDetailSerializer(serializers.ModelSerializer):
         model = Order
         fields = (
             "id", "order_number", "status", "subtotal",
-            "shipping_cost", "total", "shipping_area", "notes",
+            "shipping_cost", "total", "shipping_area", "payment_method", "notes",
             "items", "shipping_address", "created_at", "updated_at",
         )
 
@@ -143,3 +143,35 @@ class OrderCreateSerializer(serializers.Serializer):
     )
     payment_details = serializers.JSONField(required=False)
     items = OrderCreateItemSerializer(many=True, required=False)
+
+
+class OrderTrackSerializer(serializers.ModelSerializer):
+    """What a guest may see after proving they know the order number and phone."""
+
+    items = OrderItemSerializer(many=True, read_only=True)
+    shipping_area = serializers.CharField(
+        source="shipping_rate.area_type", read_only=True, default=""
+    )
+    customer_name = serializers.SerializerMethodField()
+    delivery_area = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = (
+            "order_number", "status", "payment_method", "subtotal",
+            "shipping_cost", "total", "shipping_area", "customer_name",
+            "delivery_area", "items", "created_at", "updated_at",
+        )
+
+    def get_customer_name(self, obj):
+        address = getattr(obj, "shipping_address", None)
+        return address.full_name.split(" ")[0] if address and address.full_name else ""
+
+    def get_delivery_area(self, obj):
+        address = getattr(obj, "shipping_address", None)
+        return address.city if address else ""
+
+
+class OrderTrackRequestSerializer(serializers.Serializer):
+    order_number = serializers.CharField(max_length=30)
+    phone = serializers.CharField(max_length=30)
