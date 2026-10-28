@@ -4,12 +4,17 @@ from django.db.models import (
     Q, Subquery, Sum, Value, When,
 )
 from django.db.models.functions import Coalesce
-from rest_framework import generics, filters
+from rest_framework import generics, filters, serializers, status
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 import django_filters
-from .models import Brand, Product, ProductVariant
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.shortcuts import get_object_or_404
+from .models import Brand, Product, ProductVariant, StockNotification
 from .serializers import (
     ProductListSerializer,
     ProductDetailSerializer,
@@ -216,3 +221,59 @@ class ProductSearchView(generics.ListAPIView):
                 | Q(brand__icontains=q)
             )
         ).prefetch_related("variants", "images")
+
+
+class StockNotifyThrottle(SimpleRateThrottle):
+    scope = "stock_notify"
+    rate = "20/hour"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+def _clean_contact(value: str) -> str:
+    """A Bangladeshi mobile number (stored as 01XXXXXXXXX) or an email address."""
+    value = (value or "").strip()
+    try:
+        validate_email(value)
+        return value.lower()
+    except DjangoValidationError:
+        pass
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if digits.startswith("880"):
+        digits = digits[2:]
+    if len(digits) == 11 and digits.startswith("01"):
+        return digits
+    raise serializers.ValidationError(
+        {"contact": "Enter a valid mobile number (01XXXXXXXXX) or email address."}
+    )
+
+
+class StockNotifyView(APIView):
+    """Lets a shopper ask to be told when an out-of-stock product is available again."""
+
+    permission_classes = (AllowAny,)
+    throttle_classes = [StockNotifyThrottle]
+
+    def post(self, request, slug):
+        product = get_object_or_404(Product, slug=slug, is_active=True, soft_deleted=False)
+        contact = _clean_contact(request.data.get("contact"))
+        variant = None
+        variant_id = request.data.get("variant_id")
+        if variant_id:
+            variant = get_object_or_404(
+                ProductVariant, id=variant_id, product=product, is_active=True
+            )
+        available = variant.stock if variant is not None else product.total_stock
+        if available > 0:
+            return Response(
+                {"detail": "This item is already in stock."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        StockNotification.objects.get_or_create(
+            product=product, variant=variant, contact=contact
+        )
+        return Response(
+            {"detail": "We will let you know when it is back in stock."},
+            status=status.HTTP_201_CREATED,
+        )

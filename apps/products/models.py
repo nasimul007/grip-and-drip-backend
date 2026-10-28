@@ -205,3 +205,25 @@ class ProductVariant(models.Model):
     @property
     def in_stock(self):
         return self.stock > 0
+
+
+class StockNotification(models.Model):
+    """A shopper asking to be told when an out-of-stock product (or variant) is back."""
+
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="stock_notifications"
+    )
+    variant = models.ForeignKey(
+        ProductVariant, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="stock_notifications",
+    )
+    contact = models.CharField(max_length=100, help_text="Phone number or email")
+    created_at = models.DateTimeField(auto_now_add=True)
+    notified = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-created_at"]
+        unique_together = ("product", "variant", "contact")
+
+    def __str__(self):
+        return f"{self.contact} -> {self.product.name}"

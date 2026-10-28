@@ -393,3 +393,53 @@ class OrderTrackView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(OrderTrackSerializer(order).data)
+
+
+class OrderReorderView(APIView):
+    """Put the available items of a past order back into the customer's cart."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, user=request.user)
+        cart, _ = Cart.objects.get_or_create(user=request.user)
+        skipped, added = [], 0
+
+        with transaction.atomic():
+            for line in order.items.all():
+                product = Product.objects.filter(
+                    slug=line.product_slug, is_active=True, soft_deleted=False
+                ).first()
+                variant = None
+                if product and line.variant_name:
+                    variant = ProductVariant.objects.filter(
+                        product=product, name=line.variant_name, is_active=True
+                    ).first()
+                if not product or (line.variant_name and variant is None):
+                    skipped.append(
+                        {"name": line.product_name, "reason": "no longer available"}
+                    )
+                    continue
+
+                item = CartItem.objects.filter(
+                    cart=cart, product=product, variant=variant
+                ).first()
+                existing = item.quantity if item else 0
+                quantity, warning = _cap_to_stock(product, variant, existing + line.quantity)
+                if quantity is None:
+                    skipped.append({"name": line.product_name, "reason": "out of stock"})
+                    continue
+                if item:
+                    item.quantity = quantity
+                    item.save()
+                else:
+                    CartItem.objects.create(
+                        cart=cart, product=product, variant=variant, quantity=quantity
+                    )
+                added += 1
+                if warning:
+                    skipped.append({"name": line.product_name, "reason": warning})
+
+        data = dict(CartSerializer(cart).data)
+        data.update({"added": added, "skipped": skipped})
+        return Response(data)

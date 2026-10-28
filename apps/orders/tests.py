@@ -307,3 +307,42 @@ class OrderTrackTests(APITestCase):
             [s["key"] for s in res.data["status_steps"]],
             ["pending", "confirmed", "processing", "shipped", "delivered"],
         )
+
+
+class OrderReorderTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="re", email="re@example.com", password="pass12345")
+        cls.other = User.objects.create_user(username="re2", email="re2@example.com", password="pass12345")
+        cls.rate = ShippingRate.objects.create(area_type="inside_dhaka", charge=Decimal("60"))
+        cls.plain = Product.objects.create(name="Plain", price=Decimal("100"), sku="RE-1", stock=3)
+        cls.varied = Product.objects.create(name="Varied", price=Decimal("200"), sku="RE-2", stock=5)
+        cls.blue = ProductVariant.objects.create(product=cls.varied, name="Blue", sku="RE-2-B", stock=2)
+        cls.gone = Product.objects.create(name="Gone", price=Decimal("300"), sku="RE-3", stock=5)
+        cls.order = Order.objects.create(
+            user=cls.user, shipping_rate=cls.rate, subtotal=Decimal("1"), total=Decimal("1")
+        )
+        OrderItem.objects.create(order=cls.order, product_name="Plain", product_slug=cls.plain.slug, price=100, quantity=2)
+        OrderItem.objects.create(order=cls.order, product_name="Varied", product_slug=cls.varied.slug, variant_name="Blue", price=200, quantity=5)
+        OrderItem.objects.create(order=cls.order, product_name="Gone", product_slug=cls.gone.slug, price=300, quantity=1)
+
+    def test_adds_available_items_caps_quantity_and_reports_skipped(self):
+        Product.objects.filter(pk=self.gone.pk).update(stock=0)
+        self.client.force_authenticate(self.user)
+        res = self.client.post(f"/api/orders/{self.order.id}/reorder/")
+        self.assertEqual(res.status_code, 200, res.data)
+        by_name = {i["product_name"]: i for i in res.data["items"]}
+        self.assertEqual(by_name["Plain"]["quantity"], 2)
+        self.assertEqual(by_name["Varied"]["quantity"], 2)  # capped to variant stock
+        self.assertEqual(by_name["Varied"]["variant_name"], "Blue")
+        self.assertNotIn("Gone", by_name)
+        self.assertEqual(res.data["added"], 2)
+        reasons = {s["name"]: s["reason"] for s in res.data["skipped"]}
+        self.assertEqual(reasons["Gone"], "out of stock")
+        self.assertIn("Only 2 available", reasons["Varied"])
+
+    def test_only_the_owner_can_reorder(self):
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(f"/api/orders/{self.order.id}/reorder/").status_code, 404)
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post(f"/api/orders/{self.order.id}/reorder/").status_code, 401)

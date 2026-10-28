@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from import_export.admin import ImportExportModelAdmin
 from import_export import resources
-from .models import Brand, Product, ProductImage, ProductVariant, Attribute, AttributeValue
+from .models import Brand, Product, ProductImage, ProductVariant, Attribute, AttributeValue, StockNotification
 
 
 class ProductImageInline(admin.TabularInline):
@@ -189,3 +189,11 @@ class BrandAdmin(admin.ModelAdmin):
         return ""
 
     logo_preview.short_description = "Logo"
+
+
+@admin.register(StockNotification)
+class StockNotificationAdmin(admin.ModelAdmin):
+    list_display = ("contact", "product", "variant", "created_at", "notified")
+    list_filter = ("notified",)
+    search_fields = ("contact", "product__name")
+    autocomplete_fields = ()

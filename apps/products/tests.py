@@ -141,3 +141,35 @@ class CategoryFilterTests(APITestCase):
     def test_category_detail_count_matches_listing(self):
         res = self.client.get(f"/api/categories/{self.cmf.slug}/")
         self.assertEqual(res.data["product_count"], 2)
+
+
+class StockNotifyTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .models import StockNotification
+
+        cls.StockNotification = StockNotification
+        cls.category = Category.objects.create(name="Notify")
+        cls.sold_out = Product.objects.create(
+            category=cls.category, name="Sold Out", price=100, sku="SO-1", stock=0
+        )
+        cls.available = Product.objects.create(
+            category=cls.category, name="Available", price=100, sku="AV-1", stock=4
+        )
+
+    def notify(self, product, contact, **extra):
+        return self.client.post(
+            f"/api/products/{product.slug}/notify/", {"contact": contact, **extra}, format="json"
+        )
+
+    def test_phone_and_email_are_accepted_and_deduplicated(self):
+        self.assertEqual(self.notify(self.sold_out, "+880 1712-345678").status_code, 201)
+        self.assertEqual(self.notify(self.sold_out, "01712345678").status_code, 201)
+        self.assertEqual(self.notify(self.sold_out, "Buyer@Example.com").status_code, 201)
+        self.assertEqual(self.StockNotification.objects.count(), 2)
+        self.assertEqual(self.StockNotification.objects.filter(contact="01712345678").count(), 1)
+
+    def test_rejects_bad_contact_and_in_stock_products(self):
+        self.assertEqual(self.notify(self.sold_out, "12345").status_code, 400)
+        self.assertEqual(self.notify(self.available, "01712345678").status_code, 400)
+        self.assertEqual(self.StockNotification.objects.count(), 0)
