@@ -1,6 +1,6 @@
 import random
 from django.db.models import (
-    Case, Count, DecimalField, Exists, F, IntegerField, Max, Min, OuterRef,
+    Avg, Case, Count, DecimalField, Exists, F, IntegerField, Max, Min, OuterRef,
     Q, Subquery, Sum, Value, When,
 )
 from django.db.models.functions import Coalesce
@@ -14,8 +14,10 @@ import django_filters
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
-from .models import Brand, Product, ProductVariant, StockNotification
+from .models import Brand, Product, ProductVariant, Review, StockNotification
 from .serializers import (
+    ReviewCreateSerializer,
+    ReviewSerializer,
     ProductListSerializer,
     ProductDetailSerializer,
     RelatedProductSerializer,
@@ -74,7 +76,15 @@ def annotate_listing(queryset):
         .annotate(total=Sum("quantity"))
         .values("total")
     )
+    approved = Review.objects.filter(product=OuterRef("pk"), is_approved=True).values("product")
     return queryset.annotate(
+        review_count=Coalesce(
+            Subquery(approved.annotate(c=Count("id")).values("c"), output_field=IntegerField()),
+            Value(0),
+        ),
+        rating_avg=Subquery(
+            approved.annotate(a=Avg("rating")).values("a"), output_field=DecimalField(max_digits=3, decimal_places=2)
+        ),
         discount_pct=Case(
             When(
                 compare_price__isnull=False,
@@ -177,9 +187,11 @@ class ProductFilterOptionsView(APIView):
 
 
 class ProductDetailView(generics.RetrieveAPIView):
-    queryset = Product.objects.filter(is_active=True, soft_deleted=False)
     serializer_class = ProductDetailSerializer
     lookup_field = "slug"
+
+    def get_queryset(self):
+        return annotate_listing(Product.objects.filter(is_active=True, soft_deleted=False))
 
 
 class RelatedProductsView(generics.ListAPIView):
@@ -275,5 +287,90 @@ class StockNotifyView(APIView):
         )
         return Response(
             {"detail": "We will let you know when it is back in stock."},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ReviewThrottle(SimpleRateThrottle):
+    scope = "review_post"
+    rate = "20/hour"
+
+    def get_cache_key(self, request, view):
+        if request.method != "POST":
+            return None
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+def _reviewer_name(address) -> str:
+    """First name plus last initial, e.g. "Rahim U."."""
+    parts = (address.full_name if address else "").split()
+    if not parts:
+        return "Customer"
+    return parts[0] if len(parts) == 1 else f"{parts[0]} {parts[-1][0]}."
+
+
+class ProductReviewsView(APIView):
+    """Approved reviews of a product; verified buyers (delivered order) may add one."""
+
+    permission_classes = (AllowAny,)
+    throttle_classes = [ReviewThrottle]
+
+    def get(self, request, slug):
+        product = get_object_or_404(Product, slug=slug, is_active=True, soft_deleted=False)
+        average, count = product.review_stats()
+        reviews = product.reviews.filter(is_approved=True)[:50]
+        return Response(
+            {
+                "average": average,
+                "count": count,
+                "results": ReviewSerializer(reviews, many=True).data,
+            }
+        )
+
+    def post(self, request, slug):
+        from apps.orders.models import Order
+        from apps.orders.views import _phone_digits
+
+        product = get_object_or_404(Product, slug=slug, is_active=True, soft_deleted=False)
+        data = ReviewCreateSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        valid = data.validated_data
+
+        orders = Order.objects.filter(
+            status="delivered", items__product_slug=product.slug
+        ).select_related("shipping_address").distinct()
+        number = (valid.get("order_number") or "").strip().upper()
+        if request.user.is_authenticated:
+            orders = orders.filter(user=request.user)
+            if number:
+                orders = orders.filter(order_number=number)
+        else:
+            phone = _phone_digits(valid.get("phone") or "")
+            if not number or len(phone) < 10:
+                raise serializers.ValidationError(
+                    {"detail": "Enter your order number and the phone number used at checkout."}
+                )
+            orders = orders.filter(order_number=number)
+            orders = [o for o in orders if getattr(o, "shipping_address", None) and _phone_digits(o.shipping_address.phone) == phone]
+
+        # One review per delivered order and product.
+        reviewed = set(Review.objects.filter(product=product).values_list("order_id", flat=True))
+        order = next((o for o in orders if o.id not in reviewed), None)
+        if order is None:
+            raise serializers.ValidationError(
+                {"detail": "We could not find a delivered order for this product that you have not reviewed yet."}
+            )
+
+        Review.objects.create(
+            product=product,
+            order=order,
+            user=request.user if request.user.is_authenticated else None,
+            reviewer_name=_reviewer_name(getattr(order, "shipping_address", None)),
+            rating=valid["rating"],
+            title=valid.get("title", ""),
+            body=valid.get("body", ""),
+        )
+        return Response(
+            {"detail": "Thank you! Your review will appear after we approve it."},
             status=status.HTTP_201_CREATED,
         )

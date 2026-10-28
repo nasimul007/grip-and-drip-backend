@@ -6,6 +6,7 @@ urlpatterns = [
     # Must stay above the slug route, which would otherwise match "filters".
     path("filters/", views.ProductFilterOptionsView.as_view(), name="product-filters"),
     path("<slug:slug>/", views.ProductDetailView.as_view(), name="product-detail"),
+    path("<slug:slug>/reviews/", views.ProductReviewsView.as_view(), name="product-reviews"),
     path("<slug:slug>/notify/", views.StockNotifyView.as_view(), name="product-notify"),
     path(
         "<slug:slug>/related/",

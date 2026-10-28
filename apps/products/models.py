@@ -1,3 +1,4 @@
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.text import slugify
 from ckeditor.fields import RichTextField
@@ -156,6 +157,16 @@ class Product(models.Model):
             return variants[0].image, None, False
         return None
 
+    def review_stats(self):
+        """(average, count) of approved reviews; uses listing annotations when present."""
+        if hasattr(self, "review_count"):
+            avg = getattr(self, "rating_avg", None)
+            return (round(float(avg), 1) if avg is not None else None), self.review_count
+        from django.db.models import Avg, Count
+
+        agg = self.reviews.filter(is_approved=True).aggregate(a=Avg("rating"), c=Count("id"))
+        return (round(float(agg["a"]), 1) if agg["a"] is not None else None), agg["c"]
+
     def get_meta_title(self):
         return self.meta_title or self.name
 
@@ -227,3 +238,30 @@ class StockNotification(models.Model):
 
     def __str__(self):
         return f"{self.contact} -> {self.product.name}"
+
+
+class Review(models.Model):
+    """A verified-buyer review. Hidden until an admin approves it."""
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="reviews")
+    order = models.ForeignKey(
+        "orders.Order", on_delete=models.SET_NULL, null=True, blank=True, related_name="reviews"
+    )
+    user = models.ForeignKey(
+        "accounts.CustomUser", on_delete=models.SET_NULL, null=True, blank=True, related_name="reviews"
+    )
+    reviewer_name = models.CharField(max_length=100)
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    title = models.CharField(max_length=120, blank=True)
+    body = models.TextField(max_length=2000, blank=True)
+    is_approved = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        unique_together = ("order", "product")
+
+    def __str__(self):
+        return f"{self.rating}★ {self.product.name} by {self.reviewer_name}"

@@ -173,3 +173,62 @@ class StockNotifyTests(APITestCase):
         self.assertEqual(self.notify(self.sold_out, "12345").status_code, 400)
         self.assertEqual(self.notify(self.available, "01712345678").status_code, 400)
         self.assertEqual(self.StockNotification.objects.count(), 0)
+
+
+class ReviewTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from apps.orders.models import ShippingAddress, ShippingRate
+
+        cls.User = get_user_model()
+        cls.user = cls.User.objects.create_user(username="rv", email="rv@example.com", password="pass12345")
+        cls.other = cls.User.objects.create_user(username="rv2", email="rv2@example.com", password="pass12345")
+        cls.rate = ShippingRate.objects.create(area_type="inside_dhaka", charge=Decimal("60"))
+        cls.product = Product.objects.create(name="Reviewed", price=Decimal("100"), sku="RV-1", stock=5)
+        cls.delivered = Order.objects.create(user=cls.user, shipping_rate=cls.rate, subtotal=1, total=1, status="delivered")
+        OrderItem.objects.create(order=cls.delivered, product_name="Reviewed", product_slug=cls.product.slug, price=100, quantity=1)
+        ShippingAddress.objects.create(order=cls.delivered, full_name="Rahim Uddin", phone="01712345678", address_line1="x", city="Dhaka")
+        cls.pending = Order.objects.create(user=cls.other, shipping_rate=cls.rate, subtotal=1, total=1, status="pending")
+        OrderItem.objects.create(order=cls.pending, product_name="Reviewed", product_slug=cls.product.slug, price=100, quantity=1)
+
+    def url(self):
+        return f"/api/products/{self.product.slug}/reviews/"
+
+    def test_signed_in_buyer_can_review_once_and_it_needs_approval(self):
+        from .models import Review
+
+        self.client.force_authenticate(self.user)
+        res = self.client.post(self.url(), {"rating": 5, "title": "Great", "body": "Works well"}, format="json")
+        self.assertEqual(res.status_code, 201, res.data)
+        review = Review.objects.get()
+        self.assertEqual((review.reviewer_name, review.is_approved), ("Rahim U.", False))
+        self.assertEqual(self.client.post(self.url(), {"rating": 4}, format="json").status_code, 400)
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(self.url()).data["count"], 0)
+        Review.objects.update(is_approved=True)
+        data = self.client.get(self.url()).data
+        self.assertEqual((data["count"], data["average"]), (1, 5.0))
+        self.assertEqual(data["results"][0]["reviewer_name"], "Rahim U.")
+        detail = self.client.get(f"/api/products/{self.product.slug}/").data
+        self.assertEqual((detail["review_count"], detail["rating_average"]), (1, 5.0))
+        listing = self.client.get("/api/products/").data["results"][0]
+        self.assertEqual(listing["review_count"], 1)
+        self.assertEqual(detail["schema_markup"]["aggregateRating"]["reviewCount"], "1")
+
+    def test_guest_needs_matching_order_number_and_phone(self):
+        body = {"rating": 4, "order_number": self.delivered.order_number}
+        self.assertEqual(self.client.post(self.url(), body, format="json").status_code, 400)
+        self.assertEqual(self.client.post(self.url(), {**body, "phone": "01999999999"}, format="json").status_code, 400)
+        self.assertEqual(self.client.post(self.url(), {**body, "phone": "+8801712345678"}, format="json").status_code, 201)
+
+    def test_undelivered_orders_and_other_users_cannot_review(self):
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(self.url(), {"rating": 5}, format="json").status_code, 400)
+        self.client.force_authenticate(None)
+        pending = {"rating": 5, "order_number": self.pending.order_number, "phone": "01712345678"}
+        self.assertEqual(self.client.post(self.url(), pending, format="json").status_code, 400)
+
+    def test_no_aggregate_rating_without_reviews(self):
+        detail = self.client.get(f"/api/products/{self.product.slug}/").data
+        self.assertEqual((detail["review_count"], detail["rating_average"]), (0, None))
+        self.assertNotIn("aggregateRating", detail["schema_markup"])

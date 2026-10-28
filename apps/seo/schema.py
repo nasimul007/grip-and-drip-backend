@@ -38,16 +38,19 @@ def product_schema(product: Product, request=None) -> dict:
         "sku": product.sku,
         "brand": {
             "@type": "Brand",
-            "name": product.brand or "Grip & Drip",
+            "name": product.brand or "Gadget & Widget",
         },
         "offers": offer,
-        "aggregateRating": {
-            "@type": "AggregateRating",
-            "ratingValue": "0",
-            "reviewCount": "0",
-            "bestRating": "5",
-        },
     }
+
+    average, count = product.review_stats()
+    if count:
+        schema["aggregateRating"] = {
+            "@type": "AggregateRating",
+            "ratingValue": str(average),
+            "reviewCount": str(count),
+            "bestRating": "5",
+        }
 
     if image_urls:
         schema["image"] = image_urls

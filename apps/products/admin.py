@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from import_export.admin import ImportExportModelAdmin
 from import_export import resources
-from .models import Brand, Product, ProductImage, ProductVariant, Attribute, AttributeValue, StockNotification
+from .models import Brand, Product, ProductImage, ProductVariant, Attribute, AttributeValue, Review, StockNotification
 
 
 class ProductImageInline(admin.TabularInline):
@@ -197,3 +197,20 @@ class StockNotificationAdmin(admin.ModelAdmin):
     list_filter = ("notified",)
     search_fields = ("contact", "product__name")
     autocomplete_fields = ()
+
+
+@admin.register(Review)
+class ReviewAdmin(admin.ModelAdmin):
+    list_display = ("product", "rating", "reviewer_name", "is_approved", "created_at")
+    list_filter = ("is_approved", "rating")
+    search_fields = ("product__name", "reviewer_name", "title", "body")
+    readonly_fields = ("product", "order", "user", "created_at")
+    actions = ("approve", "hide")
+
+    @admin.action(description="Approve selected reviews")
+    def approve(self, request, queryset):
+        queryset.update(is_approved=True)
+
+    @admin.action(description="Hide selected reviews")
+    def hide(self, request, queryset):
+        queryset.update(is_approved=False)

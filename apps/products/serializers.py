@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Product, ProductImage, ProductVariant
+from .models import Review, Product, ProductImage, ProductVariant
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -34,6 +34,14 @@ class ProductListSerializer(serializers.ModelSerializer):
 
     total_stock = serializers.IntegerField(read_only=True)
     in_stock = serializers.BooleanField(read_only=True)
+    rating_average = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+
+    def get_rating_average(self, obj):
+        return obj.review_stats()[0]
+
+    def get_review_count(self, obj):
+        return obj.review_stats()[1]
 
     class Meta:
         model = Product
@@ -42,6 +50,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "name",
             "slug",
             "primary_image",
+            "rating_average",
+            "review_count",
             "category_name",
             "category_slug",
             "price",
@@ -76,6 +86,14 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     )
     breadcrumb = serializers.SerializerMethodField()
     schema_markup = serializers.SerializerMethodField()
+    rating_average = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+
+    def get_rating_average(self, obj):
+        return obj.review_stats()[0]
+
+    def get_review_count(self, obj):
+        return obj.review_stats()[1]
 
     total_stock = serializers.IntegerField(read_only=True)
     in_stock = serializers.BooleanField(read_only=True)
@@ -108,6 +126,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             "variants",
             "breadcrumb",
             "schema_markup",
+            "rating_average",
+            "review_count",
             "created_at",
             "updated_at",
         )
@@ -162,3 +182,17 @@ from apps.seo.schema import product_schema as _product_schema
 
 def generate_product_schema(product, request=None):
     return _product_schema(product, request)
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = ("id", "reviewer_name", "rating", "title", "body", "created_at")
+
+
+class ReviewCreateSerializer(serializers.Serializer):
+    rating = serializers.IntegerField(min_value=1, max_value=5)
+    title = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    body = serializers.CharField(max_length=2000, required=False, allow_blank=True)
+    order_number = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
