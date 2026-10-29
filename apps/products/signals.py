@@ -7,7 +7,7 @@ from django.db.models.functions import Replace
 from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 
-from .models import Product, ProductImage, ProductVariant
+from .models import Product, ProductImage, ProductSlugHistory, ProductVariant
 
 PRODUCT_CACHE_KEYS = [
     "product_list",
@@ -33,6 +33,7 @@ def product_slug_handler(sender, instance, **kwargs):
         return
 
     old_slug, new_slug = old.slug, instance.slug
+    instance._renamed_from = old_slug
 
     for sub in ("products/images", "products/og", "variants"):
         old_dir = Path(settings.MEDIA_ROOT) / sub / old_slug
@@ -75,3 +76,15 @@ def product_slug_handler(sender, instance, **kwargs):
 def product_cache_invalidation(sender, **kwargs):
     for key in PRODUCT_CACHE_KEYS:
         cache.delete(key)
+
+
+@receiver(post_save, sender=Product)
+def product_slug_history(sender, instance, **kwargs):
+    """Remember the previous slug after a rename so the old URL can redirect."""
+    old_slug = getattr(instance, "_renamed_from", None)
+    if not old_slug:
+        return
+    instance._renamed_from = None
+    # A product renamed back to an earlier slug no longer needs that redirect.
+    ProductSlugHistory.objects.filter(old_slug=instance.slug).delete()
+    ProductSlugHistory.objects.update_or_create(old_slug=old_slug, defaults={"product": instance})

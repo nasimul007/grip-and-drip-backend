@@ -14,7 +14,7 @@ import django_filters
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
-from .models import Brand, Product, ProductVariant, Review, StockNotification
+from .models import Brand, Product, ProductSlugHistory, ProductVariant, Review, StockNotification
 from .serializers import (
     ReviewCreateSerializer,
     ReviewSerializer,
@@ -376,3 +376,17 @@ class ProductReviewsView(APIView):
             {"detail": "Thank you! Your review will appear after we approve it."},
             status=status.HTTP_201_CREATED,
         )
+
+
+class ProductSlugRedirectView(APIView):
+    """GET /api/products/redirect/<old_slug>/ -> {"slug": "<current slug>"} for renamed products."""
+
+    def get(self, request, slug):
+        entry = (
+            ProductSlugHistory.objects.select_related("product")
+            .filter(old_slug=slug, product__is_active=True, product__soft_deleted=False)
+            .first()
+        )
+        if entry is None:
+            return Response({"detail": "Not found."}, status=404)
+        return Response({"slug": entry.product.slug})

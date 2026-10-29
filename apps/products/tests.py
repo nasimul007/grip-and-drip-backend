@@ -266,3 +266,34 @@ class SeoFieldsTests(APITestCase):
         brand = res.data["brands"][0]
         self.assertEqual(brand["name"], "Anker")
         self.assertEqual(brand["description"], "Anker makes chargers.")
+
+
+class SeoRedirectAndFeedTests(APITestCase):
+    def test_renaming_slug_records_history_and_redirect_endpoint_resolves_it(self):
+        cat = Category.objects.create(name="Cables")
+        p = Product.objects.create(category=cat, name="Old Name", price=Decimal("100"), sku="RN1", stock=1)
+        old = p.slug
+        p.slug = "new-name"
+        p.save()
+        res = self.client.get(f"/api/products/redirect/{old}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["slug"], "new-name")
+        self.assertEqual(self.client.get("/api/products/redirect/unknown/").status_code, 404)
+
+    def test_variants_summary_only_with_include_param(self):
+        cat = Category.objects.create(name="Cases2")
+        p = Product.objects.create(category=cat, name="Case X", price=Decimal("100"), sku="VX1", stock=0)
+        ProductVariant.objects.create(product=p, name="Red", sku="VX1-R", stock=2, attributes={"Color": "Red"})
+        plain = self.client.get("/api/products/").data["results"][0]
+        self.assertEqual(plain["variants"], [])
+        with_variants = self.client.get("/api/products/?include=variants").data["results"][0]
+        self.assertEqual(with_variants["variants"][0]["sku"], "VX1-R")
+
+    def test_category_detail_includes_faqs(self):
+        from apps.categories.models import CategoryFAQ
+
+        cat = Category.objects.create(name="Earbuds")
+        CategoryFAQ.objects.create(category=cat, question="Are they original?", answer="Yes.")
+        res = self.client.get(f"/api/categories/{cat.slug}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["faqs"][0]["question"], "Are they original?")

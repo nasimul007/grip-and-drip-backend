@@ -79,3 +79,20 @@ class Category(MPTTModel):
         return self.meta_description or (
             self.description[:157] + "..." if len(self.description) > 160 else self.description
         )
+
+
+class CategoryFAQ(models.Model):
+    """Question/answer shown on the category page (and as FAQ structured data)."""
+
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="faqs")
+    question = models.CharField(max_length=255)
+    answer = models.TextField(help_text="Plain text, 1-3 sentences.")
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "pk"]
+        verbose_name = "FAQ"
+        verbose_name_plural = "FAQs"
+
+    def __str__(self):
+        return self.question

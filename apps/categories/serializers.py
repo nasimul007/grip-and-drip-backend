@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category
+from .models import Category, CategoryFAQ
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -27,7 +27,14 @@ class CategoryBreadcrumbSerializer(serializers.Serializer):
     slug = serializers.CharField()
 
 
+class CategoryFAQSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CategoryFAQ
+        fields = ("question", "answer")
+
+
 class CategoryDetailSerializer(serializers.ModelSerializer):
+    faqs = CategoryFAQSerializer(many=True, read_only=True)
     breadcrumb = serializers.SerializerMethodField()
     subcategories = serializers.SerializerMethodField()
     product_count = serializers.SerializerMethodField()
@@ -47,6 +54,7 @@ class CategoryDetailSerializer(serializers.ModelSerializer):
             "breadcrumb",
             "subcategories",
             "product_count",
+            "faqs",
         )
 
     def get_breadcrumb(self, obj):

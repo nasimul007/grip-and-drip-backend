@@ -43,6 +43,8 @@ class ProductListSerializer(serializers.ModelSerializer):
     def get_review_count(self, obj):
         return obj.review_stats()[1]
 
+    variants = serializers.SerializerMethodField()
+
     class Meta:
         model = Product
         fields = (
@@ -66,6 +68,9 @@ class ProductListSerializer(serializers.ModelSerializer):
             "warranty_months",
             "created_at",
             "updated_at",
+            "gtin",
+            "mpn",
+            "variants",
         )
 
     def get_primary_image(self, obj):
@@ -75,6 +80,25 @@ class ProductListSerializer(serializers.ModelSerializer):
         image, pk, is_primary = found
         # Relative media URL, as the previous ProductImageSerializer output (no request context).
         return {"id": pk, "image": image.url, "alt_text": obj.name, "is_primary": is_primary, "sort_order": 0}
+
+    def get_variants(self, obj):
+        """Variant summary for the shopping feed; only sent for ?include=variants."""
+        request = self.context.get("request")
+        if request is None or request.query_params.get("include") != "variants":
+            return []
+        return [
+            {
+                "id": v.pk,
+                "sku": v.sku,
+                "name": v.name,
+                "attributes": v.attributes,
+                "price_override": v.price_override,
+                "stock": v.stock,
+                "image": v.image.url if v.image else None,
+            }
+            for v in obj.variants.all()
+            if v.is_active
+        ]
 
 
 class ProductDetailSerializer(serializers.ModelSerializer):

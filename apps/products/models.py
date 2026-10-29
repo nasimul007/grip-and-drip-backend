@@ -87,6 +87,11 @@ class Product(models.Model):
         blank=True,
         help_text="YouTube or Vimeo link, or a direct .mp4 URL. Shown in the product gallery.",
     )
+    gtin = models.CharField(
+        max_length=14, blank=True,
+        help_text="Barcode (EAN/UPC) if the product has one; improves Google Shopping listings.",
+    )
+    mpn = models.CharField(max_length=100, blank=True, help_text="Manufacturer part number, if any.")
     warranty_months = models.PositiveSmallIntegerField(
         null=True,
         blank=True,
@@ -273,3 +278,14 @@ class Review(models.Model):
 
     def __str__(self):
         return f"{self.rating}★ {self.product.name} by {self.reviewer_name}"
+
+
+class ProductSlugHistory(models.Model):
+    """Old slugs of renamed products, so old links 301 to the new URL."""
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="slug_history")
+    old_slug = models.SlugField(max_length=255, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.old_slug} -> {self.product.slug}"

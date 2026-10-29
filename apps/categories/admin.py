@@ -1,6 +1,12 @@
 from django.contrib import admin
 from mptt.admin import DraggableMPTTAdmin
-from .models import Category
+from .models import Category, CategoryFAQ
+
+
+class CategoryFAQInline(admin.TabularInline):
+    model = CategoryFAQ
+    extra = 1
+    fields = ("question", "answer", "sort_order")
 
 
 @admin.register(Category)
@@ -18,6 +24,7 @@ class CategoryAdmin(DraggableMPTTAdmin):
     search_fields = ("name", "slug")
     prepopulated_fields = {"slug": ("name",)}
     mptt_level_indent = 20
+    inlines = [CategoryFAQInline]
 
     def product_count(self, obj):
         return obj.products.count()
