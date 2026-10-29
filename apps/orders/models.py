@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils.crypto import get_random_string
 from django.conf import settings
 from apps.products.models import Product, ProductVariant
 
@@ -50,6 +51,10 @@ class CartItem(models.Model):
 
     def __str__(self):
         return f"{self.product.name} x {self.quantity}"
+
+
+# No 0/O or 1/I, so numbers read out over the phone are not misheard.
+ORDER_NUMBER_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 class Order(models.Model):
@@ -107,10 +112,14 @@ class Order(models.Model):
             from django.utils import timezone
             now = timezone.localtime(timezone.now())
             date_part = now.strftime("%Y%m%d")
-            last_today = Order.objects.filter(
-                order_number__startswith=f"ORD-{date_part}"
-            ).count()
-            self.order_number = f"ORD-{date_part}-{last_today + 1:04d}"
+            # Random rather than a daily counter: not guessable, and two orders
+            # placed at the same moment cannot get the same number.
+            while True:
+                suffix = get_random_string(6, ORDER_NUMBER_CHARS)
+                number = f"ORD-{date_part}-{suffix}"
+                if not Order.objects.filter(order_number=number).exists():
+                    break
+            self.order_number = number
 
         was_cancelled = False
         if self.pk and not kwargs.get("force_insert"):

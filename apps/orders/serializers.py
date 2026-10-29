@@ -146,13 +146,21 @@ class OrderCreateItemSerializer(serializers.Serializer):
 
 class OrderCreateSerializer(serializers.Serializer):
     shipping_rate_id = serializers.IntegerField()
-    notes = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     shipping_address = ShippingAddressSerializer()
     payment_method = serializers.ChoiceField(
         choices=["cash", "bkash", "bank"], default="cash"
     )
-    payment_details = serializers.JSONField(required=False)
-    items = OrderCreateItemSerializer(many=True, required=False)
+    payment_details = serializers.DictField(
+        child=serializers.CharField(max_length=100, allow_blank=True),
+        required=False,
+    )
+    items = OrderCreateItemSerializer(many=True, required=False, max_length=50)
+
+    def validate_payment_details(self, value):
+        if len(value) > 5:
+            raise serializers.ValidationError("Too many payment fields.")
+        return value
 
 
 class OrderTrackSerializer(StatusFieldsMixin, serializers.ModelSerializer):

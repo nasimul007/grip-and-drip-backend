@@ -3,6 +3,7 @@ from django.db.models import Q
 from django.utils.text import slugify
 from mptt.models import MPTTModel, TreeForeignKey
 from ckeditor.fields import RichTextField
+from config.html import clean_html
 
 
 class Category(MPTTModel):
@@ -41,6 +42,7 @@ class Category(MPTTModel):
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = self._generate_unique_slug()
+        self.description = clean_html(self.description)
         super().save(*args, **kwargs)
 
     def _generate_unique_slug(self):

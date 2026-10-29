@@ -45,6 +45,19 @@ def _cart_response(cart, status_code=status.HTTP_200_OK, warning=None):
     return Response(data, status=status_code)
 
 
+# Unconfirmed orders one phone number may have open at a time. Each one holds
+# stock, so this stops a single person from emptying the shelves with fake
+# cash-on-delivery orders.
+MAX_PENDING_ORDERS_PER_PHONE = 3
+
+
+def _variant_required(product, variant):
+    """Error message when a product sold in variants is ordered without one."""
+    if variant is None and product.variants.filter(is_active=True).exists():
+        return f"Choose an option for '{product.name}'."
+    return None
+
+
 def _cap_to_stock(product, variant, wanted):
     """Return (quantity, warning); quantity is None when nothing is available."""
     available = available_stock(product, variant)
@@ -74,6 +87,9 @@ class CartAddItemView(APIView):
             variant = get_object_or_404(
                 ProductVariant, id=variant_id, product=product, is_active=True
             )
+        error = _variant_required(product, variant)
+        if error:
+            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
 
         cart, _ = Cart.objects.get_or_create(user=request.user)
         with transaction.atomic():
@@ -156,8 +172,23 @@ class OrderCreateView(APIView):
 
         valid = serializer.validated_data
         shipping_rate = get_object_or_404(
-            ShippingRate, id=valid["shipping_rate_id"]
+            ShippingRate, id=valid["shipping_rate_id"], is_active=True
         )
+
+        phone = _phone_digits(valid["shipping_address"]["phone"])
+        pending = Order.objects.filter(
+            status="pending", shipping_address__phone__endswith=phone
+        ).count() if len(phone) >= 10 else 0
+        if pending >= MAX_PENDING_ORDERS_PER_PHONE:
+            return Response(
+                {
+                    "error": (
+                        "You already have orders waiting for confirmation. "
+                        "Please wait for our call or contact us to place more."
+                    )
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
         # Anonymous/guest checkout: items come from the request body and are
         # validated + priced server-side (never trust client prices).
@@ -168,23 +199,22 @@ class OrderCreateView(APIView):
                     {"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST
                 )
 
-            line_items = []
+            # Same product/variant listed twice counts as one line.
+            merged = {}
             for item in items_data:
-                product = get_object_or_404(
-                    Product, id=item["product_id"], is_active=True
-                )
+                key = (item["product_id"], item.get("variant_id") or None)
+                merged[key] = merged.get(key, 0) + item["quantity"]
+
+            line_items = []
+            for (product_id, variant_id), quantity in merged.items():
+                product = get_object_or_404(Product, id=product_id)
                 variant = None
-                variant_id = item.get("variant_id")
                 if variant_id:
                     variant = get_object_or_404(
                         ProductVariant, id=variant_id, product=product
                     )
                 line_items.append(
-                    {
-                        "product": product,
-                        "variant": variant,
-                        "quantity": item["quantity"],
-                    }
+                    {"product": product, "variant": variant, "quantity": quantity}
                 )
 
             if not line_items:
@@ -256,6 +286,20 @@ class OrderCreateView(APIView):
                     available = locked_variant.stock
                 else:
                     available = locked_product.stock
+
+                # Re-checked here so hidden products/options cannot be bought by id,
+                # including ones sitting in a cart since before they were hidden.
+                if (
+                    not locked_product.is_active
+                    or locked_product.soft_deleted
+                    or (locked_variant is not None and not locked_variant.is_active)
+                ):
+                    raise serializers.ValidationError(
+                        {"items": f"'{locked_product.name}' is no longer available."}
+                    )
+                missing_option = _variant_required(locked_product, locked_variant)
+                if missing_option:
+                    raise serializers.ValidationError({"items": missing_option})
 
                 quantity = line["quantity"]
                 if quantity > available:

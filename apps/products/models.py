@@ -2,6 +2,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.text import slugify
 from ckeditor.fields import RichTextField
+from config.html import clean_html
 
 
 def product_image_upload_to(instance, filename):
@@ -123,6 +124,7 @@ class Product(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = self._generate_unique_slug()
+        self.description = clean_html(self.description)
         super().save(*args, **kwargs)
 
     def _generate_unique_slug(self):

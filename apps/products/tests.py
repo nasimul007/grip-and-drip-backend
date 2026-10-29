@@ -311,3 +311,19 @@ class FeedFieldsTests(APITestCase):
         full = self.client.get("/api/products/?include=variants").data["results"][0]
         self.assertEqual(full["description"], "Fast & safe charger")
         self.assertEqual(full["images"], [])
+
+
+class DescriptionCleaningTests(APITestCase):
+    def test_scripts_and_handlers_are_stripped_on_save(self):
+        cat = Category.objects.create(
+            name="Audio", description='<p onclick="x()">Hi<script>alert(1)</script></p>'
+        )
+        product = Product.objects.create(
+            category=cat, name="Speaker", price=1, sku="S1",
+            description='<p style="text-align:center;position:fixed">Loud</p><img src=x onerror=alert(1)><a href="javascript:alert(1)">x</a>',
+        )
+        self.assertEqual(cat.description, "<p>Hi</p>")
+        self.assertNotIn("onerror", product.description)
+        self.assertNotIn("javascript", product.description)
+        self.assertNotIn("position", product.description)
+        self.assertIn("text-align:center", product.description)

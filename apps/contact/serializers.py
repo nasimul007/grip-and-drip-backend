@@ -22,12 +22,3 @@ class NewsletterSubscribeSerializer(serializers.Serializer):
 
 class NewsletterUnsubscribeSerializer(serializers.Serializer):
     email = serializers.EmailField()
-
-    def validate_email(self, value):
-        try:
-            sub = NewsletterSubscriber.objects.get(email=value)
-            if not sub.is_active:
-                raise serializers.ValidationError("This email is not subscribed.")
-        except NewsletterSubscriber.DoesNotExist:
-            raise serializers.ValidationError("This email is not subscribed.")
-        return value

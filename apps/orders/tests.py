@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APITestCase
 
 from apps.categories.models import Category
@@ -9,6 +10,14 @@ from apps.products.models import Product, ProductVariant
 from .models import Cart, Order, OrderItem, ShippingRate
 
 User = get_user_model()
+
+
+class FreshThrottleTestCase(APITestCase):
+    """Starts every test with empty throttle counters (they live in the cache)."""
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
 
 
 class CartApiTests(APITestCase):
@@ -22,16 +31,21 @@ class CartApiTests(APITestCase):
             category=cls.category, name="USB Cable", price=Decimal("500"),
             sku="CAB-1", stock=5,
         )
-        cls.variant = ProductVariant.objects.create(
-            product=cls.product, name="2m", sku="CAB-1-2M",
-            price_override=Decimal("450"), stock=3,
-        )
         cls.other = Product.objects.create(
             category=cls.category, name="Charger", price=Decimal("900"),
             sku="CHG-1", stock=10,
         )
+        # Sold only in variants.
+        cls.braided = Product.objects.create(
+            category=cls.category, name="Braided Cable", price=Decimal("500"),
+            sku="BRD-1", stock=0,
+        )
+        cls.variant = ProductVariant.objects.create(
+            product=cls.braided, name="2m", sku="BRD-1-2M",
+            price_override=Decimal("450"), stock=3,
+        )
         cls.other_variant = ProductVariant.objects.create(
-            product=cls.other, name="45W", sku="CHG-1-45", stock=4
+            product=cls.braided, name="1m", sku="BRD-1-1M", stock=4
         )
 
     def setUp(self):
@@ -76,8 +90,13 @@ class CartApiTests(APITestCase):
         res = self.add(self.product, 1, variant=self.other_variant)
         self.assertEqual(res.status_code, 404)
 
+    def test_product_sold_in_variants_needs_a_variant(self):
+        res = self.add(self.braided, 1)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Choose an option", res.data["detail"])
+
     def test_variant_override_price_is_used_in_cart(self):
-        res = self.add(self.product, 2, variant=self.variant)
+        res = self.add(self.braided, 2, variant=self.variant)
         item = res.data["items"][0]
         self.assertEqual(item["price"], 450.0)
         self.assertEqual(item["total"], 900.0)
@@ -117,7 +136,7 @@ class CartApiTests(APITestCase):
         )
 
 
-class OrderPricingTests(APITestCase):
+class OrderPricingTests(FreshThrottleTestCase):
     @classmethod
     def setUpTestData(cls):
         cls.rate = ShippingRate.objects.create(
@@ -182,6 +201,41 @@ class OrderPricingTests(APITestCase):
         )
         self.assertEqual(res.status_code, 201, res.data)
         self.assertEqual(Order.objects.get(pk=res.data["id"]).subtotal, Decimal("300"))
+
+    def guest_order(self, items):
+        return self.client.post("/api/orders/", self.order_body(items), format="json")
+
+    def test_guest_order_needs_variant_when_product_has_variants(self):
+        res = self.guest_order([{"product_id": self.product.id, "quantity": 1}])
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_hidden_products_and_options_cannot_be_ordered(self):
+        ProductVariant.objects.filter(pk=self.variant.pk).update(is_active=False)
+        res = self.guest_order([{"product_id": self.product.id, "variant_id": self.variant.id, "quantity": 1}])
+        self.assertEqual(res.status_code, 400)
+        gone = Product.objects.create(name="Old", price=Decimal("50"), sku="OLD-1", stock=4, soft_deleted=True)
+        self.assertEqual(self.guest_order([{"product_id": gone.id, "quantity": 1}]).status_code, 400)
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_duplicate_lines_are_merged_before_the_stock_check(self):
+        line = {"product_id": self.product.id, "variant_id": self.variant.id, "quantity": 3}
+        res = self.guest_order([line, line])
+        self.assertEqual(res.status_code, 400)
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock, 5)
+
+    def test_one_phone_cannot_hold_unlimited_pending_orders(self):
+        line = [{"product_id": self.product.id, "variant_id": self.variant.id, "quantity": 1}]
+        for _ in range(3):
+            self.assertEqual(self.guest_order(line).status_code, 201)
+        self.assertEqual(self.guest_order(line).status_code, 429)
+
+    def test_order_numbers_are_not_sequential(self):
+        line = [{"product_id": self.product.id, "variant_id": self.variant.id, "quantity": 1}]
+        numbers = [self.guest_order(line).data["order_number"] for _ in range(2)]
+        self.assertRegex(numbers[0], r"^ORD-\d{8}-[A-Z2-9]{6}$")
+        self.assertNotEqual(numbers[0], numbers[1])
 
 
 class CartImageTests(APITestCase):
@@ -251,7 +305,7 @@ class CartOrderTests(APITestCase):
         self.assertEqual([i["id"] for i in self.client.get("/api/cart/").data["items"]], before)
 
 
-class OrderTrackTests(APITestCase):
+class OrderTrackTests(FreshThrottleTestCase):
     @classmethod
     def setUpTestData(cls):
         cls.rate = ShippingRate.objects.create(area_type="inside_dhaka", charge=Decimal("60"))
