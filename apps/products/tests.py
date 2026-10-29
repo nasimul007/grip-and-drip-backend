@@ -249,3 +249,20 @@ class ProductVideoTests(APITestCase):
         detail = self.client.get(f"/api/products/{product.slug}/").data
         self.assertEqual(detail["video_url"], "")
         self.assertNotIn("subjectOf", detail["schema_markup"])
+
+
+class SeoFieldsTests(APITestCase):
+    def test_list_exposes_updated_at_and_brand_facets_carry_description(self):
+        from .models import Brand
+
+        cat = Category.objects.create(name="Chargers")
+        Product.objects.create(category=cat, name="Anker 20W", price=Decimal("1500"), sku="AN1", stock=3, brand="Anker")
+        Brand.objects.create(name="anker", description="Anker makes chargers.")
+
+        res = self.client.get("/api/products/")
+        self.assertIn("updated_at", res.data["results"][0])
+
+        res = self.client.get("/api/products/filters/")
+        brand = res.data["brands"][0]
+        self.assertEqual(brand["name"], "Anker")
+        self.assertEqual(brand["description"], "Anker makes chargers.")

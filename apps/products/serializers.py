@@ -65,6 +65,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "brand",
             "warranty_months",
             "created_at",
+            "updated_at",
         )
 
     def get_primary_image(self, obj):

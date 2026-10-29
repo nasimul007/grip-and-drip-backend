@@ -25,6 +25,10 @@ class Brand(models.Model):
 
     name = models.CharField(max_length=255, unique=True)
     logo = models.ImageField(upload_to=brand_logo_upload_to, blank=True)
+    description = models.TextField(
+        blank=True,
+        help_text="Short intro shown on the brand page (/brand/<name>); unique text helps search rankings.",
+    )
 
     class Meta:
         ordering = ["name"]

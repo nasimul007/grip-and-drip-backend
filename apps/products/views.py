@@ -163,17 +163,19 @@ class ProductFilterOptionsView(APIView):
             .order_by("-count", "brand")
         )
         price = qs.aggregate(min=Min("price"), max=Max("price"))
-        logos = {
-            b.name.lower(): request.build_absolute_uri(b.logo.url)
-            for b in Brand.objects.exclude(logo="")
-        }
+        brand_info = {b.name.lower(): b for b in Brand.objects.all()}
         return Response(
             {
                 "brands": [
                     {
                         "name": b["brand"],
                         "count": b["count"],
-                        "logo": logos.get(b["brand"].lower()),
+                        "logo": (
+                            request.build_absolute_uri(info.logo.url)
+                            if (info := brand_info.get(b["brand"].lower())) and info.logo
+                            else None
+                        ),
+                        "description": info.description if info else "",
                     }
                     for b in brands
                 ],
