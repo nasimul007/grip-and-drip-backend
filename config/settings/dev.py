@@ -19,3 +19,6 @@ DATABASES = {
 }
 
 
+
+# Per-process cache is fine locally and keeps throttle counters out of the repo.
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}

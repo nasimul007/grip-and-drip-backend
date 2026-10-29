@@ -3,7 +3,11 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.decorators import action
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import CustomUser, Address
 from .serializers import (
     RegisterSerializer, UserSerializer, PasswordChangeSerializer,
@@ -11,10 +15,36 @@ from .serializers import (
 )
 
 
+def revoke_refresh_tokens(user):
+    """Blacklist every refresh token issued to the user (signs out all devices)."""
+    for token in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=token)
+
+
+class LoginView(TokenObtainPairView):
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "login"
+
+
+class LogoutView(APIView):
+    """Blacklists the given refresh token so it cannot be used again."""
+
+    permission_classes = (AllowAny,)
+
+    def post(self, request):
+        try:
+            RefreshToken(request.data.get("refresh", "")).blacklist()
+        except TokenError:
+            pass
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class RegisterView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     permission_classes = (AllowAny,)
     serializer_class = RegisterSerializer
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "register"
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -38,6 +68,9 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), "request": self.request}
+
 
 class PasswordChangeView(APIView):
     permission_classes = (IsAuthenticated,)
@@ -50,7 +83,17 @@ class PasswordChangeView(APIView):
             raise serializers.ValidationError({"old_password": ["Old Password: Wrong password."]})
         user.set_password(serializer.validated_data["new_password"])
         user.save()
-        return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
+        # Sign out other devices; this one gets a fresh pair.
+        revoke_refresh_tokens(user)
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "detail": "Password changed successfully.",
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class AddressViewSet(viewsets.ModelViewSet):

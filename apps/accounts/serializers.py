@@ -45,10 +45,32 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    # Required only when changing the email, which is also the login name.
+    current_password = serializers.CharField(write_only=True, required=False)
+
     class Meta:
         model = CustomUser
-        fields = ("id", "username", "full_name", "email", "phone_number", "is_vendor")
-        read_only_fields = ("id",)
+        fields = ("id", "username", "full_name", "email", "phone_number", "is_vendor", "current_password")
+        read_only_fields = ("id", "username", "is_vendor")
+
+    def validate_email(self, value):
+        value = value.strip()
+        others = CustomUser.objects.filter(email__iexact=value)
+        if self.instance:
+            others = others.exclude(pk=self.instance.pk)
+        if others.exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def validate(self, attrs):
+        password = attrs.pop("current_password", "")
+        email = attrs.get("email")
+        if self.instance and email and email.lower() != self.instance.email.lower():
+            if not self.instance.check_password(password):
+                raise serializers.ValidationError(
+                    {"current_password": "Enter your current password to change your email."}
+                )
+        return attrs
 
 
 class PasswordChangeSerializer(serializers.Serializer):
