@@ -297,3 +297,17 @@ class SeoRedirectAndFeedTests(APITestCase):
         res = self.client.get(f"/api/categories/{cat.slug}/")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data["faqs"][0]["question"], "Are they original?")
+
+
+class FeedFieldsTests(APITestCase):
+    def test_description_and_images_only_with_include_param(self):
+        cat = Category.objects.create(name="Feeds")
+        Product.objects.create(
+            category=cat, name="Feed Item", price=Decimal("100"), sku="FD1", stock=1,
+            description="<p>Fast &amp; safe charger</p>",
+        )
+        plain = self.client.get("/api/products/").data["results"][0]
+        self.assertEqual(plain["description"], "")
+        full = self.client.get("/api/products/?include=variants").data["results"][0]
+        self.assertEqual(full["description"], "Fast & safe charger")
+        self.assertEqual(full["images"], [])

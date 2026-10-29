@@ -45,6 +45,9 @@ class ProductListSerializer(serializers.ModelSerializer):
 
     variants = serializers.SerializerMethodField()
 
+    description = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+
     class Meta:
         model = Product
         fields = (
@@ -71,6 +74,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "gtin",
             "mpn",
             "variants",
+            "description",
+            "images",
         )
 
     def get_primary_image(self, obj):
@@ -80,6 +85,27 @@ class ProductListSerializer(serializers.ModelSerializer):
         image, pk, is_primary = found
         # Relative media URL, as the previous ProductImageSerializer output (no request context).
         return {"id": pk, "image": image.url, "alt_text": obj.name, "is_primary": is_primary, "sort_order": 0}
+
+    def _for_feed(self):
+        request = self.context.get("request")
+        return request is not None and request.query_params.get("include") == "variants"
+
+    def get_description(self, obj):
+        """Plain-text description; only sent for ?include=variants (shopping feed)."""
+        if not self._for_feed():
+            return ""
+        import html
+        import re
+
+        text = re.sub(r"<[^>]+>", " ", obj.description or "")
+        return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+    def get_images(self, obj):
+        """All product image URLs (primary first); only for ?include=variants."""
+        if not self._for_feed():
+            return []
+        imgs = sorted(obj.images.all(), key=lambda i: (not i.is_primary, i.sort_order, i.pk))
+        return [i.image.url for i in imgs if i.image]
 
     def get_variants(self, obj):
         """Variant summary for the shopping feed; only sent for ?include=variants."""
