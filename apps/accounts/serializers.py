@@ -68,7 +68,7 @@ class AddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
         fields = (
-            "id", "address_name", "division_id", "division_name",
+            "id", "address_name", "recipient_name", "phone", "division_id", "division_name",
             "city_id", "city_name", "area_id", "area_name",
             "address", "is_default_shipping", "created_at", "updated_at"
         )
@@ -91,7 +91,7 @@ class AddressListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
         fields = (
-            "id", "address_name",
+            "id", "address_name", "recipient_name", "phone",
             "division_id", "division_name",
             "city_id", "city_name",
             "area_id", "area_name",

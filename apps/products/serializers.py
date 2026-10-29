@@ -118,6 +118,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             "is_featured",
             "brand",
             "warranty_months",
+            "video_url",
             "attributes",
             "meta_title",
             "meta_description",

@@ -55,6 +55,15 @@ def product_schema(product: Product, request=None) -> dict:
     if image_urls:
         schema["image"] = image_urls
 
+    if product.video_url:
+        schema["subjectOf"] = {
+            "@type": "VideoObject",
+            "name": product.name,
+            "description": product.get_meta_description(),
+            "contentUrl": product.video_url,
+            "thumbnailUrl": image_urls[:1],
+        }
+
     if product_url:
         schema["url"] = product_url
 

@@ -79,6 +79,10 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
     brand = models.CharField(max_length=255, blank=True)
+    video_url = models.URLField(
+        blank=True,
+        help_text="YouTube or Vimeo link, or a direct .mp4 URL. Shown in the product gallery.",
+    )
     warranty_months = models.PositiveSmallIntegerField(
         null=True,
         blank=True,

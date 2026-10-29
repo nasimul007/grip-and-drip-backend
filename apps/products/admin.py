@@ -78,6 +78,7 @@ class ProductAdmin(ImportExportModelAdmin, admin.ModelAdmin):
                     "description",
                     "brand",
                     "warranty_months",
+                    "video_url",
                     "sku",
                 )
             },

@@ -232,3 +232,20 @@ class ReviewTests(APITestCase):
         detail = self.client.get(f"/api/products/{self.product.slug}/").data
         self.assertEqual((detail["review_count"], detail["rating_average"]), (0, None))
         self.assertNotIn("aggregateRating", detail["schema_markup"])
+
+
+class ProductVideoTests(APITestCase):
+    def test_video_url_is_exposed_on_detail_and_in_schema(self):
+        product = Product.objects.create(
+            name="Video Item", price=Decimal("100"), sku="VID-1", stock=3,
+            video_url="https://www.youtube.com/watch?v=abc123",
+        )
+        detail = self.client.get(f"/api/products/{product.slug}/").data
+        self.assertEqual(detail["video_url"], "https://www.youtube.com/watch?v=abc123")
+        self.assertEqual(detail["schema_markup"]["subjectOf"]["@type"], "VideoObject")
+
+    def test_no_video_means_empty_url_and_no_video_schema(self):
+        product = Product.objects.create(name="Plain Item", price=Decimal("100"), sku="VID-2", stock=3)
+        detail = self.client.get(f"/api/products/{product.slug}/").data
+        self.assertEqual(detail["video_url"], "")
+        self.assertNotIn("subjectOf", detail["schema_markup"])

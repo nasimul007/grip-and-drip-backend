@@ -27,6 +27,8 @@ class Address(models.Model):
         related_name="addresses"
     )
     address_name = models.CharField(max_length=250)
+    recipient_name = models.CharField(max_length=255, blank=True)
+    phone = models.CharField(max_length=20, blank=True)
     division_id = models.CharField(max_length=50)
     division_name = models.CharField(max_length=100)
     city_id = models.CharField(max_length=50)
