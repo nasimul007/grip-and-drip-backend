@@ -1,21 +1,25 @@
+from urllib.parse import unquote, urlparse
+
 from .base import *
 from decouple import config
 
 DEBUG = False
 
-DATABASES = {
-    "default": config(
-        "DATABASE_URL",
-        cast=lambda url: {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": url.split("/")[-1],
-            "USER": url.split("//")[1].split(":")[0],
-            "PASSWORD": url.split(":")[2].split("@")[0],
-            "HOST": url.split("@")[1].split(":")[0],
-            "PORT": url.split(":")[3].split("/")[0] if ":" in url.split("@")[1] else "5432",
-        },
-    )
-}
+
+def _database_from_url(url):
+    # urlparse copes with passwords containing @ : / when they are %-encoded.
+    parts = urlparse(url)
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": unquote(parts.path.lstrip("/")),
+        "USER": unquote(parts.username or ""),
+        "PASSWORD": unquote(parts.password or ""),
+        "HOST": parts.hostname or "localhost",
+        "PORT": str(parts.port or 5432),
+    }
+
+
+DATABASES = {"default": config("DATABASE_URL", cast=_database_from_url)}
 
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True

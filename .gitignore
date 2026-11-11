@@ -27,3 +27,7 @@ backend-prompt.md
 *.swo
 SESSION_SUMMARY.md
 .cache/
+
+# Database dumps hold customer data
+*.dump
+*.sql
