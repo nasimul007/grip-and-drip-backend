@@ -9,6 +9,10 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -480,6 +484,36 @@ def extract_product(page_html, base_url):
 
     for label, value in parser.spec_rows:
         specs.setdefault(label, value)
+
+    # Also extract from tables in description blocks (e.g. gadgetandgear)
+    if BeautifulSoup and parser.description_blocks:
+        for block in parser.description_blocks:
+            try:
+                soup = BeautifulSoup(block, 'html.parser')
+                for table in soup.find_all('table'):
+                    for tr in table.find_all('tr'):
+                        cells = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tr.find_all(['td', 'th'])]
+                        if len(cells) == 1 and cells[0]:
+                            txt = cells[0]
+                            low = txt.lower()
+                            if low in ('product specifications', 'specification', 'specifications', 'basic information', 'warranty information', 'product details', 'warranty', 'overview'):
+                                continue
+                            m = re.match(r'^(Type|Watt|Color|Model|Brand|Material|Length|Connector|Power|Input|Output|Warranty|Compatibility|Interface|Cable Type|Version)(.+)$', txt, re.I)
+                            if m:
+                                label = m.group(1).strip()
+                                value = m.group(2).strip()
+                                if label and value and len(label) <= 40 and len(value) <= 500:
+                                    specs[label] = value
+                            continue
+                        if len(cells) == 2 and cells[0] and cells[1]:
+                            label, value = cells[0].rstrip(':'), cells[1]
+                            low = label.lower()
+                            if low in ('product specifications', 'specification', 'specifications', 'basic information', 'warranty information', 'product details'):
+                                continue
+                            if label and value and len(label) <= 80 and len(value) <= 500:
+                                specs[label] = value
+            except Exception:
+                pass
 
     return {
         "name": name,
