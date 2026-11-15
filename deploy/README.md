@@ -2,7 +2,7 @@
 
 Layout on the server: nginx (HTTPS, static, media) -> gunicorn (unix socket) ->
 Django, with Postgres on the same machine. The app lives in
-`/srv/grip-and-drip/app`.
+`/srv/gad-and-wid`.
 
 ## 1. Before you start
 - The VM has a public IP, and ports 80/443 are open in the cloud firewall
@@ -13,14 +13,14 @@ Django, with Postgres on the same machine. The app lives in
 Replace the key path and IP.
 
 ```bash
-ssh -i ~/Downloads/ssh-key.key ubuntu@130.210.4.177 "sudo mkdir -p /srv/grip-and-drip/app && sudo chown -R ubuntu:ubuntu /srv/grip-and-drip"
+ssh -i ~/Downloads/ssh-key.key ubuntu@130.210.4.177 "sudo mkdir -p /srv/gad-and-wid && sudo chown -R ubuntu:ubuntu /srv/gad-and-wid"
 ```
 
 ```bash
 rsync -az --progress -e "ssh -i ~/Downloads/ssh-key.key" \
   --exclude .venv --exclude .git --exclude __pycache__ --exclude .env --exclude .cache \
   --exclude '*.dump' --exclude '*.sql' --exclude staticfiles \
-  ./ ubuntu@130.210.4.177:/srv/grip-and-drip/app/
+  ./ ubuntu@130.210.4.177:/srv/gad-and-wid/
 ```
 
 The database dump goes separately:
@@ -32,18 +32,18 @@ scp -i ~/Downloads/ssh-key.key grip_and_drip.dump ubuntu@130.210.4.177:/tmp/
 ## 3. Run the setup (on the server)
 
 ```bash
-cd /srv/grip-and-drip/app && chmod +x deploy/*.sh scripts/*.sh
+cd /srv/gad-and-wid && chmod +x deploy/*.sh scripts/*.sh
 DOMAIN=gadgetandwidget.duckdns.org EMAIL=you@example.com \
 FRONTEND_ORIGIN=https://your-shop.vercel.app ./deploy/setup.sh
 ```
 
 If you don't know the frontend URL yet, leave `FRONTEND_ORIGIN` out and edit
-`CORS_ALLOWED_ORIGINS` in `/srv/grip-and-drip/app/.env` later.
+`CORS_ALLOWED_ORIGINS` in `/srv/gad-and-wid/.env` later.
 
 ## 4. Restore the database, then start the app
 
 ```bash
-cd /srv/grip-and-drip/app
+cd /srv/gad-and-wid
 DB_URL=$(grep ^DATABASE_URL .env | cut -d= -f2-)
 pg_restore --no-owner --no-privileges --dbname "$DB_URL" /tmp/grip_and_drip.dump
 ./deploy/deploy.sh

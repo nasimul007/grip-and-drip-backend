@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-APP_DIR=/srv/grip-and-drip/app
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 export DJANGO_ENV=prod
 

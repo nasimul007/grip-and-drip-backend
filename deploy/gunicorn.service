@@ -5,12 +5,12 @@ After=network.target postgresql.service
 [Service]
 User=ubuntu
 Group=www-data
-WorkingDirectory=/srv/grip-and-drip/app
-EnvironmentFile=/srv/grip-and-drip/app/.env
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__APP_DIR__/.env
 Environment=DJANGO_ENV=prod
 RuntimeDirectory=gunicorn
 RuntimeDirectoryMode=0750
-ExecStart=/srv/grip-and-drip/app/.venv/bin/gunicorn config.wsgi:application \
+ExecStart=__APP_DIR__/.venv/bin/gunicorn config.wsgi:application \
     --bind unix:/run/gunicorn/gunicorn.sock \
     --workers 2 \
     --timeout 30 \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time server setup for Ubuntu 24.04 (Oracle Cloud ARM or any other VM).
 #
-# Run as the `ubuntu` user, from the project copied to /srv/grip-and-drip/app:
+# Run as the `ubuntu` user, from the project folder on the server (e.g. /srv/gad-and-wid):
 #   DOMAIN=gadgetandwidget.duckdns.org EMAIL=you@example.com \
 #   FRONTEND_ORIGIN=https://your-shop.vercel.app ./deploy/setup.sh
 #
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-APP_DIR=/srv/grip-and-drip/app
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAIN="${DOMAIN:?set DOMAIN, e.g. gadgetandwidget.duckdns.org}"
 EMAIL="${EMAIL:?set EMAIL, used by the HTTPS certificate authority for expiry notices}"
 FRONTEND_ORIGIN="${FRONTEND_ORIGIN:-https://CHANGE-ME.example.com}"
@@ -21,8 +21,6 @@ DB_USER=grip_and_drip
 
 log() { printf '\n==> %s\n' "$*"; }
 [[ "$(id -u)" -ne 0 ]] || { echo "Run as the ubuntu user, not root (sudo is used where needed)."; exit 1; }
-[[ "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" == "$APP_DIR" ]] \
-  || { echo "The project must live in $APP_DIR (nginx and the service use that path)."; exit 1; }
 
 log "Installing packages"
 sudo apt-get update
@@ -78,7 +76,12 @@ mkdir -p /var/tmp/grip-and-drip-cache
 sudo mkdir -p "$APP_DIR/media" /var/backups/grip-and-drip
 sudo chown -R ubuntu:ubuntu "$APP_DIR/media" /var/backups/grip-and-drip
 # nginx (www-data) must be able to walk into the app folder to serve static and media.
-sudo chmod o+rx /srv /srv/grip-and-drip "$APP_DIR"
+dir="$APP_DIR"
+while [[ "$dir" != "/" ]]; do
+  sudo chmod o+x "$dir"
+  dir="$(dirname "$dir")"
+done
+sudo chmod o+r "$APP_DIR"
 
 log "Installing uv and the Python dependencies"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -86,12 +89,13 @@ export PATH="$HOME/.local/bin:$PATH"
 (cd "$APP_DIR" && uv sync --frozen --no-dev)
 
 log "Installing the gunicorn service"
-sudo cp "$APP_DIR/deploy/gunicorn.service" /etc/systemd/system/gunicorn.service
+sed "s#__APP_DIR__#$APP_DIR#g" "$APP_DIR/deploy/gunicorn.service" \
+  | sudo tee /etc/systemd/system/gunicorn.service >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable gunicorn
 
 log "Installing the nginx site"
-sed "s/__DOMAIN__/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" \
+sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s#__APP_DIR__#$APP_DIR#g" "$APP_DIR/deploy/nginx.conf" \
   | sudo tee /etc/nginx/sites-available/grip-and-drip >/dev/null
 sudo ln -sf /etc/nginx/sites-available/grip-and-drip /etc/nginx/sites-enabled/grip-and-drip
 sudo rm -f /etc/nginx/sites-enabled/default
