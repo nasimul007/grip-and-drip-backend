@@ -31,3 +31,4 @@ SESSION_SUMMARY.md
 # Database dumps hold customer data
 *.dump
 *.sql
+push.sh
