@@ -19,6 +19,11 @@ class Category(MPTTModel):
     description = RichTextField(blank=True)
     meta_title = models.CharField(max_length=255, blank=True)
     meta_description = models.TextField(blank=True)
+    image = models.ImageField(
+        upload_to="categories/",
+        blank=True,
+        help_text="Tile image shown on category hub pages (e.g. Cases & Protection).",
+    )
     og_image = models.ImageField(upload_to="categories/og/", blank=True)
     is_active = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)

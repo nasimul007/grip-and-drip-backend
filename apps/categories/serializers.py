@@ -12,6 +12,7 @@ class CategorySerializer(serializers.ModelSerializer):
             "name",
             "slug",
             "description",
+            "image",
             "is_active",
             "sort_order",
             "children",
